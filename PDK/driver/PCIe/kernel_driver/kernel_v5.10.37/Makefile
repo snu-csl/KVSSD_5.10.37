@@ -26,3 +26,8 @@ nvme-rdma-y				+= rdma.o
 nvme-fc-y				+= fc.o
 
 nvme-tcp-y				+= tcp.o
+
+all:
+	        make -C /lib/modules/`uname -r`/build M=`pwd` modules
+clean:
+	        make -C /lib/modules/`uname -r`/build M=`pwd` clean
