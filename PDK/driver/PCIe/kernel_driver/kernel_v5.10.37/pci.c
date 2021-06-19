@@ -223,8 +223,11 @@ struct nvme_queue {
  * to the actual struct scatterlist.
  */
 struct nvme_iod {
+	struct nvme_io_param param;
 	struct nvme_request req;
 	struct nvme_queue *nvmeq;
+	int kv_cmd;
+	int rsvd;
 	bool use_sgl;
 	int aborted;
 	int npages;		/* In the PRP list. 0 means small pool in use */
@@ -526,6 +529,34 @@ static void **nvme_pci_iod_list(struct request *req)
 	return (void **)(iod->sg + blk_rq_nr_phys_segments(req));
 }
 
+static blk_status_t nvme_init_iod_for_kv(struct request *rq, structu nvme_dev *dev) {
+	struct nvme_iod *iod = blk_mq_rq_to_pdu(rq);
+	int nseg;
+	unsigned int size;
+
+	struct nvme_io_param *param = &iod->param;
+	nseg = param->kv_data_nents;
+	size = param->kv_data_len;
+
+	if (nseg > NVME_INT_PAGES || size > NVME_INT_BYTES(dev)) {
+		iod->dma_len = 0;
+		iod->sg = mempool_alloc(dev->iod_mempool, GFP_ATOMIC);
+		if (!iod->sg)
+			return BLK_STS_RESOURCE;
+	} else {
+		iod->sg = iod->inline_sg;
+	}
+
+	iod->kv_cmd = 0;
+	iod->aborted = 0;
+	iod->npages = -1;
+	iod->nents = 0;
+	iod->length = size;
+
+	return BLK_STS_OK;
+}
+
+
 static inline bool nvme_pci_use_sgls(struct nvme_dev *dev, struct request *req)
 {
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
@@ -591,6 +622,18 @@ static void nvme_unmap_sg(struct nvme_dev *dev, struct request *req)
 static void nvme_unmap_data(struct nvme_dev *dev, struct request *req)
 {
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
+	struct nvme_io_param *param = &iod->param;
+	enum dma_data_direction dma_dir = DMA_BIDIRECTIONAL;
+
+	if (iod->kv_cmd) {
+		if (param->kv_data_sg_ptr) {
+			dma_unmap_sg(dev->dev, iod->sg, iod->nents, dma_dir);
+		}
+		if (param->kv_meta_sg_ptr) {
+			dma_unmap_sg(dev->dev, param->kv_meta_sg_ptr, 1, DMA_BIDIRECTIONAL);
+		}
+		nvme_cleanup_cmd(req);
+	}
 
 	if (iod->dma_len) {
 		dma_unmap_page(dev->dev, iod->first_dma, iod->dma_len,
@@ -630,7 +673,7 @@ static blk_status_t nvme_pci_setup_prps(struct nvme_dev *dev,
 {
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 	struct dma_pool *pool;
-	int length = blk_rq_payload_bytes(req);
+	int length;
 	struct scatterlist *sg = iod->sg;
 	int dma_len = sg_dma_len(sg);
 	u64 dma_addr = sg_dma_address(sg);
@@ -639,6 +682,12 @@ static blk_status_t nvme_pci_setup_prps(struct nvme_dev *dev,
 	void **list = nvme_pci_iod_list(req);
 	dma_addr_t prp_dma;
 	int nprps, i;
+
+	if (iod->kv_cmd) {
+		length = iod->param.kv_data_len;
+	} else {
+		length = blk_rq_payload_bytes(req);
+	}
 
 	length -= (NVME_CTRL_PAGE_SIZE - offset);
 	if (length <= 0) {
@@ -837,12 +886,59 @@ static blk_status_t nvme_setup_sgl_simple(struct nvme_dev *dev,
 	return BLK_STS_OK;
 }
 
+static blk_status_t nvme_kv_map_data(struct nvme_dev *dev, struct request *req,
+		struct nvme_command *cmnd)
+{
+	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
+	struct nvme_io_param *param = &iod->param;
+	enum dma_data_direction dma_dir = DMA_BIDIRECTIONAL;
+	blk_status_t ret = BLK_STS_IOERR;
+
+	if (param->kv_data_sg_ptr) {
+		struct scatterlist *sg;
+		int i;
+		/* copy user sg to iod->sg */
+		for_each_sg(param->kv_data_sg_ptr, sg, param->kv_data_nents, i) {
+			iod->sg[i] = *sg;
+		}
+		iod->nents = param->kv_data_nents;
+		ret = BLK_STS_RESOURCE;
+		if (!dma_map_sg_attrs(dev->dev, iod->sg, iod->nents, dma_dir, DMA_ATTR_NO_WARN))
+			goto out;
+
+		ret = nvme_setup_prps(dev, req);
+		if (ret != BLK_STS_OK)
+			goto out_unmap;
+
+		cmnd->kv_store.dptr.prp1 = cpu_to_le64(sg_dma_address(iod->sg));
+		cmnd->kv_store.dptr.prp2 = cpu_to_le64(iod->first_dma);
+	}
+	ret = BLK_STS_IOERR;
+
+	if (param->kv_meta_sg_ptr) {
+		if (!dma_map_sg(dev->dev, param->kv_meta_sg_ptr, 1, DMA_BIDIRECTIONAL))
+			goto out_unmap;
+		cmnd->kv_store.key_prp = cpu_to_le64(sg_dma_address(param->kv_meta_sg_ptr));
+	}
+	return BLK_STS_OK;
+
+out_unmap:
+	if (param->kv_data_sg_ptr)
+		dma_unmap_sg(dev->dev, iod->sg, iod->nents, dma_dir);
+out:
+	return ret;
+}
+
 static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 		struct nvme_command *cmnd)
 {
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 	blk_status_t ret = BLK_STS_RESOURCE;
 	int nr_mapped;
+
+	if (is_kv_cmd(cmnd->opcode)) {
+		return nvme_kv_map_data(dev, req, cmnd);
+	}
 
 	if (blk_rq_nr_phys_segments(req) == 1) {
 		struct bio_vec bv = req_bvec(req);
@@ -919,6 +1015,7 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 	struct nvme_command cmnd;
 	blk_status_t ret;
+	bool b_kv_cmd = false;
 
 	iod->aborted = 0;
 	iod->npages = -1;
@@ -935,19 +1032,59 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	if (ret)
 		return ret;
 
-	if (blk_rq_nr_phys_segments(req)) {
+	b_kv_cmd = is_kv_cmd(cmnd.opcode);
+	if (b_kv_cmd) {
+		ret = nvme_init_iod_for_kv(req, dev);
+		if (ret)
+			goto out_free_cmd;
+	}
+
+	if (blk_rq_nr_phys_segments(req) || is_kv_cmd(cmnd.opcode)) {
 		ret = nvme_map_data(dev, req, &cmnd);
 		if (ret)
 			goto out_free_cmd;
 	}
 
-	if (blk_integrity_rq(req)) {
+	if (blk_integrity_rq(req) || is_kv_cmd(cmnd.opcode)) {
 		ret = nvme_map_metadata(dev, req, &cmnd);
 		if (ret)
 			goto out_unmap_data;
 	}
 
 	blk_mq_start_request(req);
+
+#ifdef KV_NVME_DUMMY_OP
+	if (is_kv_cmd(cmnd.common.opcode)) {
+#ifdef KV_NVME_DUMMY_OP_REPORT
+		__u32 *data = (__u32*) cmnd.common.cdw2;
+		pr_err("[dump nvme kv comand]\n");
+		pr_err("\topcode:(%02x)\n", cmnd.common.opcode);
+		pr_err("\tflags:(%02x)\n", cmnd.common.flags);
+		pr_err("\tcommand id:(%04x)\n", cmnd.common.command_id);
+		pr_err("\tns id:(%08x)\n", cmnd.common.nsid);
+		pr_err("\tcdw2:(%08x)\n", data[0]);
+		pr_err("\tcdw3:(%08x)\n", data[1]);
+		pr_err("\tcdw4:(%08x)\n", data[2]);
+		pr_err("\tcdw5:(%08x)\n", data[3]);
+		pr_err("\tcdw6:(%08x)\n", data[4]);
+		pr_err("\tcdw7:(%08x)\n", data[5]);
+		pr_err("\tcdw8:(%08x)\n", data[6]);
+		pr_err("\tcdw9:(%08x)\n", data[7]);
+		pr_err("\tcdw10:(%08x)\n", data[8]);
+		pr_err("\tcdw11:(%08x)\n", data[9]);
+		pr_err("\tcdw12:(%08x)\n", data[10]);
+		pr_err("\tcdw13:(%08x)\n", data[11]);
+		pr_err("\tcdw14:(%08x)\n", data[12]);
+		pr_err("\tcdw15:(%08x)\n", data[13]);
+#endif
+		nvme_req(req)->status = NVME_SC_SUCCESS;
+		nvme_req(req)->result.u32 = NVME_SC_SUCCESS;
+		if (is_kv_retrieve_cmd(cmnd.common.opcode))
+			nvme_req(req)->result.u32 = cmnd.common.cdw10[5];
+		blk_mq_complete_request(req);
+		return BLK_STS_OK;
+	}
+
 	nvme_submit_cmd(nvmeq, &cmnd, bd->last);
 	return BLK_STS_OK;
 out_unmap_data:
