@@ -18,9 +18,14 @@
 #include <linux/types.h>
 #include <linux/pr.h>
 #include <linux/ptrace.h>
-#include <linux/nvme_ioctl.h>
 #include <linux/pm_qos.h>
 #include <asm/unaligned.h>
+
+#include <linux/file.h>
+#include <linux/eventfd.h>
+#include <linux/kthread.h>
+
+#include "linux_nvme_ioctl.h"
 
 #include "nvme.h"
 #include "fabrics.h"
@@ -88,6 +93,521 @@ static DEFINE_IDA(nvme_instance_ida);
 static dev_t nvme_chr_devt;
 static struct class *nvme_class;
 static struct class *nvme_subsys_class;
+
+//AIO data structure
+static struct	kmem_cache *kaioctx_cachep = 0;
+static struct kmem_cache *kaiocb_cachep = 0;
+static mempool_t *kaioctx_mempool = 0;
+static mempool_t *kaiocb_mempool = 0;
+
+static __u32 aio_context_id;
+
+#define AIOCTX_MAX 1024
+#define AIOCB_MAX (1024 * 64)
+
+static __u64 debug_completed = 0;
+static int debug_outstanding = 0;
+
+struct nvme_kaioctx
+{
+	struct nvme_aioctx uctx;
+	struct eventfd_ctx *eventctx;
+	struct list_head kaiocb_list;
+	spinlock_t kaioctx_spinlock;
+	struct kref ref;
+};
+
+static struct nvme_kaioctx **g_kaioctx_tb = NULL;
+static spinlock_t g_kaioctx_tb_spinlock;
+
+struct aio_user_ctx {
+	int nents;
+	int len;
+	struct page ** pages;
+	struct scatterlist *sg;
+	char data[1];
+};
+
+struct nvme_kaiocb {
+	struct list_head aiocb_list;
+	struct nvme_aioevent event;
+	int opcode;
+	struct nvme_command cmd;
+	struct gendisk *disk;
+	unsigned long start_time;
+	struct scatterlist meta_sg;
+	bool need_to_copy;
+	bool use_meta;
+	void *kv_data;
+	void *meta;
+	struct aio_user_ctx *user_ctx;
+	struct aio_user_ctx *kernel_ctx;
+	struct request *req;
+};
+
+/* context for aio worker.*/
+struct aio_worker_ctx{
+	int cpu;
+	spinlock_t kaiocb_spinlock;
+	struct list_head kaiocb_list;
+	wait_queue_head_t aio_waitqueue;
+};
+
+/* percpu aio worker context pointer */
+struct aio_worker_ctx * __percpu aio_w_ctx;
+/* percpu aio worker pointer */
+struct task_struct ** __percpu aio_worker;
+
+
+static void remove_kaioctx(struct nvme_kaioctx * ctx)
+{
+	struct nvme_kaiocb *tmpcb;
+	struct list_head *pos, *q;
+	unsigned long flags;
+	if (ctx) {
+		spin_lock_irqsave(&ctx->kaioctx_spinlock, flags);
+		list_for_each_safe(pos, q, &ctx->kaiocb_list) {
+			tmpcb = list_entry(pos, struct nvme_kaiocb, aiocb_list);
+			list_del(pos);
+			mempool_free(tmpcb, kaiocb_mempool);
+		}
+		spin_unlock_irqrestore(&ctx->kaioctx_spinlock, flags);
+		eventfd_ctx_put(ctx->eventctx);
+		mempool_free(ctx, kaioctx_mempool);
+	}
+}
+
+static void cleanup_kaioctx(struct kref *kref) {
+	struct nvme_kaioctx *ctx = container_of(kref, struct nvme_kaioctx, ref);
+	remove_kaioctx(ctx);
+}
+
+static void ref_kaioctx(struct nvme_kaioctx *ctx) {
+	kref_get(&ctx->ref);
+}
+
+static void deref_kaioctx(struct nvme_kaioctx *ctx) {
+	kref_put(&ctx->ref, cleanup_kaioctx);
+}
+
+/* destroy mempools */
+static void destroy_aio_mempool(void)
+{
+	int i = 0;
+	if (g_kaioctx_tb) {
+		for (i = 0; i < AIOCTX_MAX; ++i) {
+			if (g_kaioctx_tb[i]) {
+				remove_kaioctx(g_kaioctx_tb[i]);
+				g_kaioctx_tb[i] = NULL;
+			}
+		}
+		kfree(g_kaioctx_tb);
+		g_kaioctx_tb = NULL;
+	}
+	if (kaiocb_mempool)
+		mempool_destroy(kaiocb_mempool);
+	if (kaioctx_mempool)
+		mempool_destroy(kaioctx_mempool);
+	if (kaiocb_cachep)
+		kmem_cache_destroy(kaioctx_cachep);
+	if (kaioctx_cachep)
+		kmem_cache_destroy(kaioctx_cachep);
+}
+
+/* prepare basic data structures
+ * to support aio context and requests
+ */
+static int aio_service_init(void)
+{
+	g_kaioctx_tb = (struct nvme_kaioctx**)kmalloc(sizeof(struct nvme_kaioctx*) * AIOCTX_MAX, GFP_KERNEL);
+	if (!g_kaioctx_tb)
+		goto fail;
+	memset(g_kaioctx_tb, 0, sizeof(struct nvme_kaioctx*) * AIOCTX_MAX);
+
+	// slab allocator and memory pool
+	kaioctx_cachep = kmem_cache_create("nvme_kaioctx", sizeof(struct nvme_kaioctx), 0, 0, NULL);
+	if (!kaioctx_cachep)
+		goto fail;
+	kaiocb_cachep = kmem_cache_create("nvme_kaiocb", sizeof(struct nvme_kaiocb), 0, 0, NULL);
+	if (!kaiocb_cachep)
+		goto fail;
+
+	kaiocb_mempool = mempool_create_slab_pool(AIOCB_MAX, kaiocb_cachep);
+	if (!kaiocb_mempool)
+		goto fail;
+	kaioctx_mempool = mempool_create_slab_pool(AIOCTX_MAX, kaioctx_cachep);
+	if (!kaioctx_mempool)
+		goto fail;
+
+	// context id 0 is reserved for normal I/O operations (synchronous)
+	aio_context_id = 1;
+	spin_lock_init(&g_kaioctx_tb_spinlock);
+	printk(KERN_DEBUG "nvme-aio:initialized\n");
+	return 0;
+
+fail:
+	destroy_aio_mempool();
+	return -ENOMEM;
+}
+
+/* release memory before exit */
+static int aio_service_exit(void)
+{
+	destroy_aio_mempool();
+	printk(KERN_DEBUG "nvme-aio: unloaded\n");
+	return 0;
+}
+
+static struct nvme_kaioctx* find_kaioctx(__u32 ctxid) {
+	struct nvme_kaioctx *tmp = NULL;
+	tmp = g_kaioctx_tb[ctxid];
+	if (tmp) ref_kaioctx(tmp);
+	return tmp;
+}
+
+/* find an aio context with a given id */
+static int set_aio_event(__u32 ctxid, struct nvme_kaiocb *kaiocb)
+{
+	struct nvme_kaioctx *tmp;
+	unsigned long flags;
+	tmp = find_kaioctx(ctxid);
+	if (tmp) {
+		spin_lock_irqsave(&tmp->kaioctx_spinlock, flags);
+		list_add_tail(&kaiocb->aiocb_list, &tmp->kaiocb_list);
+		spin_unlock_irqrestore(&tmp->kaioctx_spinlock, flags);
+		eventfd_signal(tmp->eventctx, 1);
+		deref_kaioctx(tmp);
+		return 0;
+	}
+
+	return -1;
+}
+
+/*
+ * delete an aio context
+ * it will release any resources allocated for this context
+ * */
+static int nvme_del_aioctx(struct nvme_aioctx __user *uctx)
+{
+	struct nvme_kaioctx ctx;
+	unsigned long flags;
+	if (copy_from_user(&ctx, uctx, sizeof(struct nvme_aioctx)))
+		return -EFAULT;
+
+	spin_lock_irqsave(&g_kaioctx_tb_spinlock, flags);
+	if (g_kaioctx_tb[ctx.uctx.ctxid]) {
+		deref_kaioctx(g_kaioctx_tb[ctx.uctx.ctxid]);
+		g_kaioctx_tb[ctx.uctx.ctxid] = NULL;
+	}
+	spin_unlock_irqrestore(&g_kaioctx_tb_spinlock, flags);
+	return 0;
+}
+
+/*
+ * set up an aio context
+ * allocate a new context with given parameters and prepare an eventfd_context
+ */
+static int nvme_set_aioctx(struct nvme_aioctx __user *uctx)
+{
+	struct nvme_kaioctx* ctx;
+	struct fd efile;
+	struct eventfd_ctx* eventfd_ctx = NULL;
+	unsigned long flags;
+	int ret = 0;
+	int i = 0;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EACCES;
+
+	ctx = mempool_alloc(kaioctx_mempool, GFP_NOIO);
+	if (!ctx)
+		return -ENOMEM;
+
+	if (copy_from_user(ctx, uctx, sizeof(struct nvme_aioctx)))
+		return -EFAULT;
+
+	efile = fdget(ctx->uctx.eventfd);
+	if (!efile.file) {
+		pr_err("nvme_set_aioctx: failed to get efile for efd %d.\n", ctx->uctx.eventfd);
+		ret = -EBADF;
+		goto exit;
+	}
+
+	eventfd_ctx = eventfd_ctx_fileget(efile.file);
+	if (IS_ERR(eventfd_ctx)) {
+		pr_err("nvme_set_aioctx: failed to get eventfd_ctx for efd %d.\n", ctx->uctx.eventfd);
+		ret = PTR_ERR(eventfd_ctx);
+		goto put_efile;
+	}
+
+	// set context id
+	spin_lock_irqsave(&g_kaioctx_tb_spinlock, flags);
+	if (g_kaioctx_tb[aio_context_id]) {
+		for (i = 0; i < AIOCTX_MAX; ++i) {
+			if (g_kaioctx_tb[i] == NULL) {
+				aio_context_id = i;
+				break;
+			}
+		}
+		if (i >= AIOCTX_MAX) {
+			spin_unlock_irqrestore(&g_kaioctx_tb_spinlock, flags);
+			pr_err("nvme_set_aioctx: too many aioctx open.\n");
+			ret = -EMFILE;
+			goto put_event_fd;
+		}
+	}
+	spin_unlock_irqrestore(&g_kaioctx_tb_spinlock, flags);
+	ctx->uctx.ctxid = aio_context_id++;
+	if (aio_context_id == AIOCTX_MAX)
+		aio_context_id = 0;
+	ctx->eventctx = eventfd_ctx;
+	spin_lock_init(&ctx->kaioctx_spinlock);
+	INIT_LIST_HEAD(&ctx->kaiocb_list);
+	kref_init(&ctx->ref);
+	spin_lock_irqsave(&g_kaioctx_tb_spinlock, flags);
+	g_kaioctx_tb[ctx->uctx.ctxid] = ctx;
+	spin_unlock_irqrestore(&g_kaioctx_tb_spinlock, flags);
+
+	if (copy_to_user(&uctx->ctxid, &ctx->uctx.ctxid, sizeof(ctx->uctx.ctxid))) {
+		pr_err("nvme_set_aioctx: failed to copy context id %d to user.\n", ctx->uctx.ctxid);
+		ret = -EINVAL;
+		goto cleanup;
+	}
+	eventfd_ctx = NULL;
+	debug_outstanding = 0;;
+	debug_completed = 0;
+	fdput(efile);
+	return 0;
+cleanup:
+	spin_lock_irqsave(&g_kaioctx_tb_spinlock, flags);
+	g_kaioctx_tb[ctx->uctx.ctxid - 1] = NULL;
+	spin_unlock_irqrestore(&g_kaioctx_tb_spinlock, flags);
+	mempool_free(ctx, kaiocb_mempool);
+put_event_fd:
+	eventfd_ctx_put(eventfd_ctx);
+put_efile:
+	fdput(efile);
+exit:
+	return ret;
+}
+
+/*
+ * get an aiocb which represents a single I/O request
+ * */
+static struct nvme_kaiocb* get_aiocb(__u64 reqid)
+{
+	struct nvme_kaiocb* req;
+	req = mempool_alloc(kaiocb_mempool, GFP_NOIO);
+	if (!req) return 0;
+	memset(req, 0, sizeof(*req));
+	INIT_LIST_HEAD(&req->aiocb_list);
+	req->event.reqid = reqid;
+	return req;
+}
+
+/*
+ * returns the completed events to user
+ * */
+static int nvme_get_ioevents(struct nvme_aioevents __user *uevents)
+{
+	struct list_head *pos, *q;
+	struct nvme_kaiocb *tmp;
+	struct nvme_kaioctx *tmp_ctx;
+	unsigned long flags;
+	LIST_HEAD(tmp_head);
+	__u16 count = 0;
+	__u16 nr = 0;
+	__u32 ctxid = 0;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EACCES;
+
+	if (get_user(nr, &uevents->nr) < 0)
+		return -EINVAL;
+
+	if (get_user(ctxid, &uevents->ctxid) < 0)
+		return -EINVAL;
+
+	tmp_ctx = find_kaioctx(ctxid);
+	if (tmp_ctx) {
+		spin_lock_irqsave(&tmp_ctx->kaioctx_spinlock, flags);
+		list_for_each_safe(pos, q, &tmp_ctx->kaiocb_list) {
+			list_del_init(pos);
+			list_add(pos, &tmp_head);
+			++count;
+			if (nr == count) break;
+		}
+		spin_unlock_irqrestore(&tmp_ctx->kaioctx_spinlock, flags);
+		deref_kaioctx(tmp_ctx);
+		count = 0;
+		list_for_each_safe(pos, q, &tmp_head) {
+			list_del(pos);
+			tmp = list_entry(pos, struct nvme_kaiocb, aiocb_list);
+			copy_to_user(&uevents->events[count], &tmp->event, sizeof(struct nvme_aioevent));
+			mempool_free(tmp, kaiocb_mempool);
+			++count;
+		}
+	}
+	if (put_user(count, &uevents->nr) < 0)
+		return -EINVAL;
+
+	return 0;
+}
+
+static void kv_complete_aio_fn(struct nvme_kaiocb* cmdinfo)
+{
+	struct request* req = cmdinfo->req;
+	int i = 0;
+	blk_mq_free_request(req);
+	if (cmdinfo->need_to_copy) {
+		if ((is_kv_retrieve_cmd(cmdinfo->opcode) && !cmdinfo->event.status) ||
+				(is_kv_iter_read_cmd(cmdinfo->opcode) && (!cmdinfo->event.status ||
+										((cmdinfo->event.status & 0xff) == 0x93)))) {
+			/* unaligned user buffer, copy back to user if this request is for read */
+			sg_copy_from_buffer(cmdinfo->user_ctx->sg, cmdinfo->user_ctx->nents,
+					cmdinfo->kv_data, cmdinfo->user_ctx->len);
+		}
+		for (i = 0; i < cmdinfo->kernel_ctx->nents; ++i)
+			put_page(sg_page(&cmdinfo->kernel_ctx->sg[i]));
+	}
+
+	if (cmdinfo->user_ctx) {
+		// TODO: Replace generic_end_io_acct function
+		// if (is_kv_store_cmd(cmdinfo->opcode) || is_kv_append_cmd(cmdinfo->opcode))
+		// 	generic_end_io_acct(req->q, WRITE, &cmdinfo->disk->part0, cmdinfo->start_time);
+		// else
+		// 	generic_end_io_acct(req->q, READ, &cmdinfo->disk->part0, cmdinfo->start_time);
+		for (i = 0; i < cmdinfo->user_ctx->nents; ++i)
+			put_page(sg_page(&cmdinfo->user_ctx->sg[i]));
+	}
+
+	if (cmdinfo->use_meta)
+		put_page(sg_page(&cmdinfo->meta_sg));
+
+	if (cmdinfo->need_to_copy) {
+		kfree(cmdinfo->kernel_ctx);
+		kfree(cmdinfo->kv_data);
+	}
+
+	if (cmdinfo->user_ctx) kfree(cmdinfo->user_ctx);
+	if (cmdinfo->meta) kfree(cmdinfo->meta);
+
+	if (set_aio_event(cmdinfo->event.ctxid, cmdinfo))
+		mempool_free(cmdinfo, kaiocb_mempool);
+}
+
+static void wake_up_aio_worker(struct aio_worker_ctx *aio_ctx)
+{
+	wake_up(&aio_ctx->aio_waitqueue);
+}
+
+static void insert_aiocb_to_worker(struct nvme_kaiocb *aiocb)
+{
+	struct aio_worker_ctx *ctx = NULL;
+	unsigned long flags;
+	int cpu = smp_processor_id();
+	INIT_LIST_HEAD(&aiocb->aiocb_list);
+
+	ctx = per_cpu_ptr(aio_w_ctx, cpu);
+	spin_lock_irqsave(&ctx->kaiocb_spinlock, flags);
+	list_add_tail(&aiocb->aiocb_list, &ctx->kaiocb_list);
+	spin_unlock_irqrestore(&ctx->kaiocb_spinlock, flags);
+	wake_up_aio_worker(ctx);
+}
+
+static void kv_async_completion(struct request *req, blk_status_t status)
+{
+	struct nvme_kaiocb *aiocb = req->end_io_data;
+
+	aiocb->req = req;
+	aiocb->event.result = le32_to_cpu(nvme_req(req)->result.u32);
+	aiocb->event.status = le16_to_cpu(nvme_req(req)->status);
+
+	insert_aiocb_to_worker(aiocb);
+}
+
+static int kvaio_percpu_worker_fn(void *arg)
+{
+	struct aio_worker_ctx *ctx = (struct aio_worker_ctx*)arg;
+	struct list_head *pos, *next;
+	unsigned long flags;
+	LIST_HEAD(tmp_list);
+	pr_err("start aio worker %u\n", ctx->cpu);
+	while (!kthread_should_stop() || !list_empty(&ctx->kaiocb_list)) {
+		if (list_empty(&ctx->kaiocb_list)) {
+			wait_event_interruptible_timeout(ctx->aio_waitqueue,
+					!list_empty(&ctx->kaiocb_list), HZ/10);
+			continue;
+		}
+		INIT_LIST_HEAD(&tmp_list);
+		spin_lock_irqsave(&ctx->kaiocb_spinlock, flags);
+		list_splice(&ctx->kaiocb_list, &tmp_list);
+		INIT_LIST_HEAD(&ctx->kaiocb_list);
+		spin_unlock_irqrestore(&ctx->kaiocb_spinlock, flags);
+		if (!list_empty(&tmp_list)) {
+			list_for_each_safe(pos, next, &tmp_list) {
+				struct nvme_kaiocb *aiocb = list_entry(pos, struct nvme_kaiocb, aiocb_list);
+				list_del_init(pos);
+				kv_complete_aio_fn(aiocb);
+			}
+		}
+	}
+	return 0;
+}
+
+static int aio_worker_init(void)
+{
+	struct task_struct **p = NULL;
+	struct aio_worker_ctx *ctx = NULL;
+	int i = 0;
+
+	aio_worker = alloc_percpu(struct task_struct *);
+	if (!aio_worker) {
+		pr_err("fail to alloc percpu worker task_struct!\n");
+		return -ENOMEM;
+	}
+
+	aio_w_ctx = alloc_percpu(struct aio_worker_ctx);
+	if (!aio_w_ctx) {
+		pr_err("fail to alloc percpu aio context!\n");
+		goto out_free;
+	}
+
+	for_each_online_cpu(i) {
+		ctx = per_cpu_ptr(aio_w_ctx, i);
+		ctx->cpu = i;
+		spin_lock_init(&ctx->kaiocb_spinlock);
+		INIT_LIST_HEAD(&ctx->kaiocb_list);
+		init_waitqueue_head(&ctx->aio_waitqueue);
+		p = per_cpu_ptr(aio_worker, i);
+		*p = kthread_create_on_node(kvaio_percpu_worker_fn, ctx, cpu_to_node(i), "aio_completion_worker/%u", i);
+		if (!(*p))
+			goto reset_pthread;
+		kthread_bind(*p, i);
+		wake_up_process(*p);
+	}
+	return 0;
+
+reset_pthread:
+	for_each_online_cpu(i) {
+		p = per_cpu_ptr(aio_worker, i);
+		if (*p) kthread_stop(*p);
+	}
+out_free:
+	if (aio_worker) free_percpu(aio_worker);
+	return -ENOMEM;
+}
+
+static void aio_worker_exit(void) {
+	struct task_struct **p = NULL;
+	int i = 0;
+	for_each_online_cpu(i) {
+		p = per_cpu_ptr(aio_worker, i);
+		if (*p) kthread_stop(*p);
+	}
+	free_percpu(aio_worker);
+	free_percpu(aio_w_ctx);
+}
 
 static void nvme_put_subsystem(struct nvme_subsystem *subsys);
 static void nvme_remove_invalid_namespaces(struct nvme_ctrl *ctrl,
@@ -1175,6 +1695,432 @@ static int nvme_keep_alive(struct nvme_ctrl *ctrl)
 	return 0;
 }
 
+/*
+ * There was two types of operation need to map single continueous physical continues physical address.
+ * 1. kv_exist and kv_iterate's buffer.
+ * 2. kv_store, kv_retrieve, and kv_delete's key buffer.
+ * Note.
+ * - check it's address 4byte word algined. If not malloc and copy data.
+ */
+#define KV_QUEUE_DMA_ALIGNMENT (0x03)
+
+static bool check_add_for_single_cont_phyaddress(void __user *address, unsigned length, struct request_queue *q)
+{
+	unsigned offset = 0;
+	unsigned count = 0;
+
+	offset = offset_in_page(address);
+	count = DIV_ROUND_UP(offset + length, PAGE_SIZE);
+	if ((count > 1) || ((unsigned long)address & KV_QUEUE_DMA_ALIGNMENT)) {
+		/* address does not aligned as 4 bytes or addr needs more than one page */
+		return false;
+	}
+	return true;
+}
+
+static int user_addr_npages(int offset, int size)
+{
+	unsigned count = DIV_ROUND_UP(offset + size, PAGE_SIZE);
+	return count;
+}
+
+static struct aio_user_ctx *get_aio_user_ctx(void __user *addr, unsigned len, bool b_kernel)
+{
+	int offset = offset_in_page(addr);
+	int datalen = len;
+	int num_page = user_addr_npages(offset, len);
+	int size = 0;
+	struct aio_user_ctx *user_ctx = NULL;
+	int mapped_pages = 0;
+	int i = 0;
+	size = sizeof(struct aio_user_ctx) + sizeof(__le64*) * num_page
+		+ sizeof(struct scatterlist) * num_page - 1;
+	/* need to keep user address to map to copy when complete request */
+	user_ctx = (struct aio_user_ctx*)kmalloc(size, GFP_KERNEL);
+	if (!user_ctx)
+		return NULL;
+
+	user_ctx->nents = 0;
+	user_ctx->pages = (struct page**)user_ctx->data;
+	user_ctx->sg = (struct scatterlist*)(user_ctx->data + sizeof(__le64*) * num_page);
+	if (b_kernel) {
+		struct page* page = NULL;
+		char *src_data = addr;
+		for ( i = 0; i < num_page; ++i) {
+			page = virt_to_page(src_data);
+			get_page(page);
+			user_ctx->pages[i] = page;
+			src_data += PAGE_SIZE;
+		}
+	} else {
+		mapped_pages = get_user_pages_fast((unsigned long)addr, num_page, 1,
+				user_ctx->pages);
+		if (mapped_pages != num_page) {
+			user_ctx->nents = mapped_pages;
+			goto exit;
+		}
+	}
+	user_ctx->nents = num_page;
+	user_ctx->len = datalen;
+	sg_init_table(user_ctx->sg, num_page);
+	for (i = 0; i < num_page; ++i) {
+		sg_set_page(&user_ctx->sg[i], user_ctx->pages[i],
+				min_t(unsigned, datalen, PAGE_SIZE - offset), offset);
+		datalen -= (PAGE_SIZE - offset);
+		offset = 0;
+	}
+	sg_mark_end(&user_ctx->sg[i - 1]);
+	return user_ctx;
+exit:
+	if (user_ctx) {
+		for (i = 0; i < user_ctx->nents; ++i)
+			put_page(user_ctx->pages[i]);
+		kfree(user_ctx);
+	}
+	return NULL;
+}
+
+int __nvme_submit_kv_user_cmd(struct request_queue *q, struct nvme_command *cmd,
+		struct nvme_passthru_kv_cmd *pthr_cmd,
+		void __user *ubuffer, unsigned bufflen,
+		void __user *meta_buffer, unsigned meta_len, u32 meta_seed,
+		u32 *result, u32 *status, unsigned timeout, bool aio)
+{
+	struct nvme_ns *ns = q->queuedata;
+	struct gendisk *disk = ns ? ns->disk : NULL;
+	struct request *req;
+	int ret = 0;
+	struct nvme_kaiocb *aiocb = NULL;
+	struct aio_user_ctx *user_ctx = NULL;
+	struct aio_user_ctx *kernel_ctx = NULL;
+	struct scatterlist *meta_sg_ptr;
+	struct scatterlist meta_sg;
+	struct page *p_page = NULL;
+	struct nvme_io_param *param = NULL;
+	char *kv_data = NULL;
+	char *kv_meta = NULL;
+	bool need_to_copy = false;
+	int i = 0, offset = 0;
+	unsigned len = 0;
+	unsigned long start_time = jiffies;
+
+	if (!disk)
+		return -EFAULT;
+
+	if (aio) {
+		aiocb = get_aiocb(pthr_cmd->reqid);
+		if (!aiocb) {
+			ret = -ENOMEM;
+			goto out_end;
+		}
+		aiocb->cmd = *cmd;
+		aiocb->disk = disk;
+		cmd = &aiocb->cmd;
+	}
+
+	req = nvme_alloc_request(q, cmd, 0, NVME_QID_ANY);
+	if (IS_ERR(req)) {
+		if (aiocb) mempool_free(aiocb, kaiocb_mempool);
+		return PTR_ERR(req);
+	}
+
+	req->timeout = timeout ? timeout : ADMIN_TIMEOUT;
+	param = nvme_io_param(req);
+
+	param->kv_data_sg_ptr = NULL;
+	param->kv_meta_sg_ptr = NULL;
+	param->kv_data_nents = 0;
+	param->kv_data_len = 0;
+
+	if (ubuffer && bufflen) {
+		if ((unsigned long)ubuffer & KV_QUEUE_DMA_ALIGNMENT) {
+			need_to_copy = true;
+			len = DIV_ROUND_UP(bufflen, PAGE_SIZE) * PAGE_SIZE;
+			kv_data = kmalloc(len, GFP_KERNEL);
+			if (kv_data == NULL) {
+				ret = -ENOMEM;
+				goto out_req_end;
+			}
+		}
+		user_ctx = get_aio_user_ctx(ubuffer, bufflen, false);
+		if (need_to_copy) {
+			kernel_ctx = get_aio_user_ctx(kv_data, bufflen, true);
+			if (kernel_ctx) {
+				if (is_kv_store_cmd(cmd->common.opcode) || is_kv_append_cmd(cmd->common.opcode))
+					sg_copy_to_buffer(user_ctx->sg, user_ctx->nents, kv_data, user_ctx->len);
+			}
+		} else {
+			kernel_ctx = user_ctx;
+		}
+		if (user_ctx == NULL || kernel_ctx == NULL) {
+			ret = -ENOMEM;
+			goto out_unmap;
+		}
+		param->kv_data_sg_ptr = kernel_ctx->sg;
+		param->kv_data_nents = kernel_ctx->nents;
+		param->kv_data_len = kernel_ctx->len;
+		if (aio) {
+			aiocb->need_to_copy = need_to_copy;
+			aiocb->kv_data = kv_data;
+			aiocb->kernel_ctx = kernel_ctx;
+			aiocb->user_ctx = user_ctx;
+			aiocb->start_time = start_time;
+		}
+		// TODO: Replace generic_start_io_acct
+		// if (is_kv_store_cmd(cmd->common.opcode) || is_kv_append_cmd(cmd->common.opcode)) {
+		// 	generic_start_io_acct(q, WRITE, (bufflen >> 9 ? bufflen >> 9 : 1), &disk->part0);
+		// } else {
+		// 	generic_start_io_acct(q, READ, (bufflen >> 9 ? bufflen >> 9 : 1), &disk->part0);
+		// }
+	}
+
+	if (meta_buffer || meta_len) {
+		if (check_add_for_single_cont_phyaddress(meta_buffer, meta_len, q)) {
+			ret = get_user_pages_fast((unsigned long)meta_buffer, 1, 0, &p_page);
+			if (ret != 1) {
+				ret = -ENOMEM;
+				goto out_unmap;
+			}
+			offset = offset_in_page(meta_buffer);
+		} else {
+			len = DIV_ROUND_UP(meta_len, 256) * 256;
+			kv_meta = kmalloc(len, GFP_KERNEL);
+			if (!kv_meta) {
+				ret = -ENOMEM;
+				goto out_unmap;
+			}
+			if (copy_from_user(kv_meta, meta_buffer, meta_len)) {
+				ret = -ENOMEM;
+				goto out_free_meta;
+			}
+			offset = offset_in_page(kv_meta);
+			p_page = virt_to_page(kv_meta);
+			get_page(p_page);
+		}
+		if (aio) {
+			aiocb->use_meta = true;
+			aiocb->meta = kv_meta;
+			meta_sg_ptr = &aiocb->meta_sg;
+		} else {
+			meta_sg_ptr = &meta_sg;     /* sync io */
+		}
+
+		sg_init_table(meta_sg_ptr, 1);
+		sg_set_page(meta_sg_ptr, p_page, meta_len, offset);
+		sg_mark_end(meta_sg_ptr);
+		param->kv_meta_sg_ptr = meta_sg_ptr;
+	} else {
+		param->kv_meta_sg_ptr = NULL;
+	}
+
+	if (aio) {
+		aiocb->event.ctxid = pthr_cmd->ctxid;
+		aiocb->event.reqid = pthr_cmd->reqid;
+		aiocb->opcode = cmd->common.opcode;
+		req->end_io_data = aiocb;
+		blk_execute_rq_nowait(req->q, disk, req, 0, kv_async_completion);
+		return 0;
+	} else {
+		blk_execute_rq(req->q, disk, req, 0);
+		if (nvme_req(req)->flags & NVME_REQ_CANCELLED)
+			ret = -EINTR;
+		else
+			ret = nvme_req(req)->status;
+
+		if (result)
+			*result = le32_to_cpu(nvme_req(req)->result.u32);
+		if (status)
+			*status = le16_to_cpu(nvme_req(req)->status);
+	}
+
+	if (need_to_copy) {
+		if ((is_kv_retrieve_cmd(cmd->common.opcode) && !ret) ||
+					(is_kv_iter_read_cmd(cmd->common.opcode) && (!ret || ((le16_to_cpu(nvme_req(req)->status) & 0xff) == 0x93)))) {
+			sg_copy_from_buffer(user_ctx->sg, user_ctx->nents, kv_data, user_ctx->len);
+		}
+	}
+out_free_meta:
+	if (p_page) put_page(p_page);
+	if (kv_meta) kfree(kv_meta);
+out_unmap:
+	if (user_ctx) {
+		for (i = 0; i < user_ctx->nents; ++i)
+			put_page(sg_page(&user_ctx->sg[i]));
+		kfree(user_ctx);
+	}
+	if (need_to_copy) {
+		if (kernel_ctx) {
+			for (i = 0; i < kernel_ctx->nents; ++i)
+				put_page(sg_page(&kernel_ctx->sg[i]));
+			kfree(kernel_ctx);
+		}
+		if (kv_data) kfree(kv_data);
+	}
+out_req_end:
+	if (aio && aiocb) mempool_free(aiocb, kaiocb_mempool);
+	blk_mq_free_request(req);
+
+	// TODO: Replace generic_end_io_acct
+	// if (is_kv_store_cmd(cmd->common.opcode) || is_kv_append_cmd(cmd->common.opcode))
+	// 	generic_end_io_acct(q, WRITE, &disk->part0, start_time);
+	// else
+	// 	generic_end_io_acct(q, READ, &disk->part0, start_time);
+out_end:
+	return ret;
+}
+
+static int nvme_user_kv_cmd(struct nvme_ctrl *ctrl,
+		struct nvme_ns *ns,
+		struct nvme_passthru_kv_cmd __user *ucmd, bool aio)
+{
+	struct nvme_passthru_kv_cmd cmd;
+	struct nvme_command c;
+	unsigned timeout = 0;
+	int status;
+	void __user *metadata = NULL;
+	unsigned meta_len = 0;
+	unsigned option = 0;
+	unsigned iter_handle = 0;
+	if (!capable(CAP_SYS_ADMIN))
+		return -EACCES;
+	if (copy_from_user(&cmd, ucmd, sizeof(cmd)))
+		return -EFAULT;
+	if (cmd.flags)
+		return -EINVAL;
+
+	/* filter out non kv command */
+	if (!is_kv_cmd(cmd.opcode))
+		return -EINVAL;
+	memset(&c, 0, sizeof(c));
+	c.common.opcode = cmd.opcode;
+	c.common.flags = cmd.flags;
+#ifdef KSID_SUPPORT
+	c.common.nsid = cmd.cdw3;
+#else
+	c.common.nsid = cpu_to_le32(cmd.nsid);
+#endif
+	if (cmd.timeout_ms)
+		timeout = msecs_to_jiffies(cmd.timeout_ms);
+
+	switch (cmd.opcode) {
+		case nvme_cmd_kv_store:
+		case nvme_cmd_kv_append:
+			option = cpu_to_le32(cmd.cdw4);
+			c.kv_store.offset = cpu_to_le32(cmd.cdw5);
+			/* validate key length */
+			if (cmd.key_len > KVCMD_MAX_KEY_SIZE ||
+					cmd.key_len < KVCMD_MIN_KEY_SIZE) {
+				cmd.result = KVS_ERR_VALUE;
+				status = -EINVAL;
+				goto exit;
+			}
+			c.kv_store.key_len = cpu_to_le32(cmd.key_len - 1);
+			c.kv_store.option = (option & 0xff);
+			/* set value size */
+			if (cmd.data_len % 4) {
+				c.kv_store.value_len = cpu_to_le32((cmd.data_len >> 2) + 1);
+				c.kv_store.invalid_byte = 4 - (cmd.data_len % 4);
+			} else {
+				c.kv_store.value_len = cpu_to_le32(cmd.data_len >> 2);
+			}
+
+			if (cmd.key_len > KVCMD_INLINE_KEY_MAX) {
+				metadata = (void __user*)cmd.key_addr;
+				meta_len = cmd.key_len;
+			} else {
+				memcpy(c.kv_store.key, cmd.key, cmd.key_len);
+			}
+			break;
+		case nvme_cmd_kv_retrieve:
+			option = cpu_to_le32(cmd.cdw4);
+			c.kv_retrieve.offset = cpu_to_le32(cmd.cdw5);
+			/* validate key length */
+			if (cmd.key_len > KVCMD_MAX_KEY_SIZE ||
+					cmd.key_len < KVCMD_MIN_KEY_SIZE) {
+				cmd.result = KVS_ERR_VALUE;
+				status = -EINVAL;
+				goto exit;
+			}
+			c.kv_retrieve.key_len = cpu_to_le32(cmd.key_len - 1);
+			c.kv_retrieve.option = option & 0xff;
+			c.kv_retrieve.value_len = cpu_to_le32(cmd.data_len >> 2);
+
+			if (cmd.key_len > KVCMD_INLINE_KEY_MAX) {
+				metadata = (void __user*)cmd.key_addr;
+				meta_len = cmd.key_len;
+			} else {
+				memcpy(c.kv_retrieve.key, cmd.key, cmd.key_len);
+			}
+			break;
+		case nvme_cmd_kv_delete:
+			option = cpu_to_le32(cmd.cdw4);
+			/* validate key length */
+			if (cmd.key_len > KVCMD_MAX_KEY_SIZE ||
+					cmd.key_len < KVCMD_MIN_KEY_SIZE) {
+				cmd.result = KVS_ERR_VALUE;
+				status = -EINVAL;
+				goto exit;
+			}
+			c.kv_delete.key_len = cpu_to_le32(cmd.key_len - 1);
+			c.kv_delete.option = option & 0xff;
+			if (cmd.key_len > KVCMD_INLINE_KEY_MAX) {
+				metadata = (void __user*)cmd.key_addr;
+				meta_len = cmd.key_len;
+			} else {
+				memcpy(c.kv_delete.key, cmd.key, cmd.key_len);
+			}
+			break;
+		case nvme_cmd_kv_exist:
+			option = cpu_to_le32(cmd.cdw4);
+			/* validate key length */
+			if (cmd.key_len > KVCMD_MAX_KEY_SIZE ||
+					cmd.key_len < KVCMD_MIN_KEY_SIZE) {
+				cmd.result = KVS_ERR_VALUE;
+				status = -EINVAL;
+				goto exit;
+			}
+			c.kv_exist.key_len = cpu_to_le32(cmd.key_len - 1);
+			c.kv_exist.option = option & 0xff;
+			if (cmd.key_len > KVCMD_INLINE_KEY_MAX) {
+				metadata = (void __user*)cmd.key_addr;
+				meta_len = cmd.key_len;
+			} else {
+				memcpy(c.kv_exist.key, cmd.key, cmd.key_len);
+			}
+			break;
+		case nvme_cmd_kv_iter_req:
+			option = cpu_to_le32(cmd.cdw4);
+			iter_handle = cpu_to_le32(cmd.cdw5);
+			c.kv_iter_req.iter_handle = iter_handle & 0xff;
+			c.kv_iter_req.option = option & 0xff;
+			c.kv_iter_req.iter_val = cpu_to_le32(cmd.cdw12);
+			c.kv_iter_req.iter_bitmask = cpu_to_le32(cmd.cdw13);
+			break;
+		case nvme_cmd_kv_iter_read:
+			option = cpu_to_le32(cmd.cdw4);
+			iter_handle = cpu_to_le32(cmd.cdw5);
+			c.kv_iter_read.iter_handle = iter_handle & 0xff;
+			c.kv_iter_read.option = option & 0xff;
+			c.kv_iter_read.value_len = cpu_to_le32(cmd.data_len >> 2);
+			break;
+		default:
+			cmd.result = KVS_ERR_IO;
+			status = -EINVAL;
+			goto exit;
+	}
+
+	status = __nvme_submit_kv_user_cmd(ns ? ns->queue : ctrl->admin_q, &c, &cmd,
+			(void __user*)(uintptr_t)cmd.data_addr, cmd.data_len, metadata, meta_len, 0,
+			&cmd.result, &cmd.status, timeout, aio);
+
+exit:
+	if (put_user(cmd.result, &ucmd->result))
+		return -EFAULT;
+	if (put_user(cmd.status, &ucmd->status))
+		return -EFAULT;
+	return status;
+}
+
 static void nvme_keep_alive_work(struct work_struct *work)
 {
 	struct nvme_ctrl *ctrl = container_of(to_delayed_work(work),
@@ -1739,6 +2685,16 @@ static int nvme_ioctl(struct block_device *bdev, fmode_t mode,
 	case NVME_IOCTL_IO64_CMD:
 		ret = nvme_user_cmd64(ns->ctrl, ns, argp);
 		break;
+	case NVME_IOCTL_IO_KV_CMD:
+		return nvme_user_kv_cmd(ns->ctrl, ns, (void __user *)arg, false);
+	case NVME_IOCTL_AIO_CMD:
+		return nvme_user_kv_cmd(ns->ctrl, ns, (void __user*)arg, true);
+	case NVME_IOCTL_SET_AIOCTX:
+		return nvme_set_aioctx((void __user*)arg);
+	case NVME_IOCTL_DEL_AIOCTX:
+		return nvme_del_aioctx((void __user*)arg);
+	case NVME_IOCTL_GET_AIOEVENT:
+		return nvme_get_ioevents((void __user*)arg);
 	default:
 		if (ns->ndev)
 			ret = nvme_nvm_ioctl(ns, cmd, arg);
@@ -4703,6 +5659,14 @@ static int __init nvme_core_init(void)
 	if (result < 0)
 		goto destroy_delete_wq;
 
+	result = aio_service_init();
+	if (result)
+		goto unregister_chrdev;
+
+	result = aio_worker_init();
+	if (result)
+		goto destroy_aio_service;
+
 	nvme_class = class_create(THIS_MODULE, "nvme");
 	if (IS_ERR(nvme_class)) {
 		result = PTR_ERR(nvme_class);
@@ -4713,10 +5677,15 @@ static int __init nvme_core_init(void)
 	nvme_subsys_class = class_create(THIS_MODULE, "nvme-subsystem");
 	if (IS_ERR(nvme_subsys_class)) {
 		result = PTR_ERR(nvme_subsys_class);
-		goto destroy_class;
+		goto destroy_aio_worker;
 	}
 	return 0;
 
+destroy_aio_worker:
+	aio_worker_exit();
+	class_destroy(nvme_class);
+destroy_aio_service:
+	aio_service_exit();
 destroy_class:
 	class_destroy(nvme_class);
 unregister_chrdev:
@@ -4740,6 +5709,8 @@ static void __exit nvme_core_exit(void)
 	destroy_workqueue(nvme_reset_wq);
 	destroy_workqueue(nvme_wq);
 	ida_destroy(&nvme_instance_ida);
+	aio_worker_exit();
+	aio_service_exit();
 }
 
 MODULE_LICENSE("GPL");
