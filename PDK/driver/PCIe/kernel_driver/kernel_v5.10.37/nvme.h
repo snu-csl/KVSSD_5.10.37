@@ -6,7 +6,7 @@
 #ifndef _NVME_H
 #define _NVME_H
 
-#include <linux/nvme.h>
+#include "linux_nvme.h"
 #include <linux/cdev.h>
 #include <linux/pci.h>
 #include <linux/kref.h>
@@ -19,6 +19,23 @@
 #include <linux/t10-pi.h>
 
 #include <trace/events/block.h>
+
+#define KSID_SUPPORT
+
+#define is_kv_append_cmd(opcode)      ((opcode) == nvme_cmd_kv_append)
+#define is_kv_store_cmd(opcode)       ((opcode) == nvme_cmd_kv_store)
+#define is_kv_retrieve_cmd(opcode)    ((opcode) == nvme_cmd_kv_retrieve)
+#define is_kv_delete_cmd(opcode)      ((opcode) == nvme_cmd_kv_delete)
+#define is_kv_iter_req_cmd(opcode)    ((opcode) == nvme_cmd_kv_iter_req)
+#define is_kv_iter_read_cmd(opcode)   ((opcode) == nvme_cmd_kv_iter_read)
+#define is_kv_exist_cmd(opcode)       ((opcode) == nvme_cmd_kv_exist)
+#define is_kv_cmd(opcode)             (is_kv_append_cmd(opcode) ||\
+                                       is_kv_store_cmd(opcode) ||\
+                                       is_kv_retrieve_cmd(opcode) ||\
+                                       is_kv_delete_cmd(opcode) ||\
+                                       is_kv_iter_req_cmd(opcode) ||\
+                                       is_kv_iter_read_cmd(opcode) ||\
+                                       is_kv_exist_cmd(opcode))
 
 extern unsigned int nvme_io_timeout;
 #define NVME_IO_TIMEOUT	(nvme_io_timeout * HZ)
@@ -158,6 +175,19 @@ struct nvme_request {
 	u16			status;
 	struct nvme_ctrl	*ctrl;
 };
+
+struct nvme_io_param {
+	struct nvme_request req;
+	struct scatterlist *kv_data_sg_ptr;
+	struct scatterlist *kv_meta_sg_ptr;
+	int kv_data_nents;
+	int kv_data_len;
+};
+
+static inline struct nvme_io_param *nvme_io_param(struct request *req)
+{
+	return blk_mq_rq_to_pdu(req);
+}
 
 /*
  * Mark a bio as coming in through the mpath node.

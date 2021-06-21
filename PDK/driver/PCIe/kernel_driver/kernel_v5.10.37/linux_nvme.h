@@ -682,7 +682,19 @@ enum nvme_opcode {
 	nvme_cmd_zone_mgmt_send	= 0x79,
 	nvme_cmd_zone_mgmt_recv	= 0x7a,
 	nvme_cmd_zone_append	= 0x7d,
+
+	nvme_cmd_kv_store = 0x81,
+	nvme_cmd_kv_append = 0x83,
+	nvme_cmd_kv_retrieve = 0x90,
+	nvme_cmd_kv_delete = 0xA1,
+	nvme_cmd_kv_iter_req = 0xB1,
+	nvme_cmd_kv_iter_read = 0xB2,
+	nvme_cmd_kv_exist = 0xB3,
 };
+
+#define KVCMD_INLINE_KEY_MAX    (16)
+#define KVCMD_MAX_KEY_SIZE      (255)
+#define KVCMD_MIN_KEY_SIZE      (4)
 
 #define nvme_opcode_name(opcode)	{ opcode, #opcode }
 #define show_nvm_opcode_name(val)				\
@@ -953,6 +965,160 @@ enum {
 struct nvme_feat_host_behavior {
 	__u8 acre;
 	__u8 resv1[511];
+};
+
+/*KV SSD Command*/
+struct nvme_kv_store_command {
+  __u8    opcde;
+  __u8    flags;
+  __u16   command_id;
+  __le32  nsid;
+  __u64   rsvd;
+  __le32  offset;
+  __u32   rsvd2;
+  union nvme_data_ptr dptr; /* value dptr prp1,2 */
+  __le32  value_len;        /* size in word */
+  __u8    key_len;          /* 0 ~ 255 (keylen - 1) */
+  __u8    option;
+  __u8    invalid_byte:2;
+  __u8    rsvd3:6;
+  __u8    rsvd4;
+  union {
+    struct {
+      char    key[16];
+    };
+    struct {
+      __le64  key_prp;
+      __le64  key_prp2;
+    };
+  };
+};
+
+struct nvme_kv_append_command {
+  __u8    opcde;
+  __u8    flags;
+  __u16   command_id;
+  __le32  nsid;
+  __u64   rsvd;
+  __le32  offset;
+  __u32   rsvd2;
+  union nvme_data_ptr dptr; /* value dptr prp1,2 */
+  __le32  value_len;        /* size in word */
+  __u8    key_len;          /* 0 ~ 255 (keylen - 1) */
+  __u8    option;
+  __u8    invalid_byte:2;
+  __u8    rsvd3:6;
+  __u8    rsvd4;
+  union {
+    struct {
+      char    key[16];
+    };
+    struct {
+      __le64  key_prp;
+      __le64  key_prp2;
+    };
+  };
+};
+
+struct nvme_kv_retrieve_command {
+  __u8    opcde;
+  __u8    flags;
+  __u16   command_id;
+  __le32  nsid;
+  __u64   rsvd;
+  __le32  offset;
+  __u32   rsvd2;
+  union nvme_data_ptr dptr; /* value dptr prp1,2 */
+  __le32  value_len;        /* size in word */
+  __u8    key_len;          /* 0 ~ 255 (keylen - 1) */
+  __u8    option;
+  __u16   rsvd3;
+  union {
+    struct {
+      char    key[16];
+    };
+    struct {
+      __le64  key_prp;
+      __le64  key_prp2;
+    };
+  };
+};
+
+struct nvme_kv_delete_command {
+  __u8    opcde;
+  __u8    flags;
+  __u16   command_id;
+  __le32  nsid;
+  __u64   rsvd;
+  __le32  offset;
+  __u32   rsvd2;
+  __u64   rsvd3[2];
+  __le32  value_len;        /* size in word */
+  __u8    key_len;          /* 0 ~ 255 (keylen - 1) */
+  __u8    option;
+  __u16   rsvd4;
+  union {
+    struct {
+      char    key[16];
+    };
+    struct {
+      __le64  key_prp;
+      __le64  key_prp2;
+    };
+  };
+};
+
+struct nvme_kv_iter_req_command {
+  __u8    opcde;
+  __u8    flags;
+  __u16   command_id;
+  __le32  nsid;
+  __u64   rsvd[4];
+  __le32  zero;             /* should be zero */
+  __u8    iter_handle;
+  __u8    option;
+  __u16   rsvd2;
+  __u32   iter_val;
+  __u32   iter_bitmask;
+  __u64   rsvd3;
+};
+
+struct nvme_kv_iter_read_command {
+  __u8    opcde;
+  __u8    flags;
+  __u16   command_id;
+  __le32  nsid;
+  __u64   rsvd[2];
+  union nvme_data_ptr dptr; /* value dptr prp1,2 */
+  __le32  value_len;        /* size in word */
+  __u8    iter_handle;
+  __u8    option;
+  __u16   rsvd2;
+  __u64   rsvd3[2];
+};
+
+struct nvme_kv_exist_command {
+  __u8    opcde;
+  __u8    flags;
+  __u16   command_id;
+  __le32  nsid;
+  __u64   rsvd;
+  __le32  offset;
+  __u32   rsvd2;
+  __u64   rsvd3[2];
+  __le32  value_len;        /* size in word */
+  __u8    key_len;          /* 0 ~ 255 (keylen - 1) */
+  __u8    option;
+  __u16   rsvd4;
+  union {
+    struct {
+      char    key[16];
+    };
+    struct {
+      __le64  key_prp;
+      __le64  key_prp2;
+    };
+  };
 };
 
 enum {
@@ -1417,6 +1583,14 @@ struct nvme_command {
 		struct nvmf_property_get_command prop_get;
 		struct nvme_dbbuf dbbuf;
 		struct nvme_directive_cmd directive;
+
+		struct nvme_kv_store_command kv_store;
+		struct nvme_kv_retrieve_command kv_retrieve;
+		struct nvme_kv_delete_command kv_delete;
+		struct nvme_kv_append_command kv_append;
+		struct nvme_kv_iter_req_command kv_iter_req;
+		struct nvme_kv_iter_read_command kv_iter_read;
+		struct nvme_kv_exist_command kv_exist;
 	};
 };
 
@@ -1446,6 +1620,16 @@ static inline bool nvme_is_write(struct nvme_command *cmd)
 	 *
 	 * Why can't we simply have a Fabrics In and Fabrics out command?
 	 */
+	/* check nvme kv command */
+	if (cmd->common.opcode == nvme_cmd_kv_store || cmd->common.opcode == nvme_cmd_kv_append)
+		return 1;
+	if (cmd->common.opcode == nvme_cmd_kv_retrieve ||
+		cmd->common.opcode == nvme_cmd_kv_delete ||
+		cmd->common.opcode == nvme_cmd_kv_iter_req ||
+		cmd->common.opcode == nvme_cmd_kv_iter_read ||
+		cmd->common.opcode == nvme_cmd_kv_exist)
+		return 0;
+
 	if (unlikely(nvme_is_fabrics(cmd)))
 		return cmd->fabrics.fctype & 1;
 	return cmd->common.opcode & 1;
