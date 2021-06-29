@@ -21,6 +21,7 @@
 #include <trace/events/block.h>
 
 #define KSID_SUPPORT
+#define NVME_DEBUG 1
 
 #define is_kv_append_cmd(opcode)      ((opcode) == nvme_cmd_kv_append)
 #define is_kv_store_cmd(opcode)       ((opcode) == nvme_cmd_kv_store)
@@ -186,6 +187,10 @@ struct nvme_io_param {
 
 static inline struct nvme_io_param *nvme_io_param(struct request *req)
 {
+	if (NVME_DEBUG) {
+		printk("nvme header called: %s\n", __FUNCTION__);
+	}
+	
 	return blk_mq_rq_to_pdu(req);
 }
 
@@ -201,11 +206,19 @@ enum {
 
 static inline struct nvme_request *nvme_req(struct request *req)
 {
+	if (NVME_DEBUG) {
+		printk("nvme header called: %s\n", __FUNCTION__);
+	}
+	
 	return blk_mq_rq_to_pdu(req);
 }
 
 static inline u16 nvme_req_qid(struct request *req)
 {
+	if (NVME_DEBUG) {
+		printk("nvme header called: %s\n", __FUNCTION__);
+	}
+	
 	if (!req->q->queuedata)
 		return 0;
 	return blk_mq_unique_tag_to_hwq(blk_mq_unique_tag(req)) + 1;
