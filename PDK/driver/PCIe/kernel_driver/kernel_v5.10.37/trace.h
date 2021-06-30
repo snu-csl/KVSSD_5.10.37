@@ -10,7 +10,6 @@
 #if !defined(_TRACE_NVME_H) || defined(TRACE_HEADER_MULTI_READ)
 #define _TRACE_NVME_H
 
-#include <linux/nvme.h>
 #include <linux/tracepoint.h>
 #include <linux/trace_seq.h>
 

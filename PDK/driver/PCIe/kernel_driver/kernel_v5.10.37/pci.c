@@ -223,8 +223,11 @@ struct nvme_queue {
  * to the actual struct scatterlist.
  */
 struct nvme_iod {
+	struct nvme_io_param param;
 	struct nvme_request req;
 	struct nvme_queue *nvmeq;
+	int kv_cmd;
+	int rsvd;
 	bool use_sgl;
 	int aborted;
 	int npages;		/* In the PRP list. 0 means small pool in use */
@@ -730,7 +733,7 @@ static void nvme_print_sgl(struct scatterlist *sgl, int nents)
 }
 
 static blk_status_t nvme_pci_setup_prps(struct nvme_dev *dev,
-		struct request *req, struct nvme_rw_command *cmnd)
+		struct request *req, struct nvme_command *cmnd)
 {
 	if (NVME_DEBUG) {
 		printk("nvme function called: %s\n", __FUNCTION__);
@@ -738,7 +741,7 @@ static blk_status_t nvme_pci_setup_prps(struct nvme_dev *dev,
 	
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 	struct dma_pool *pool;
-	int length = blk_rq_payload_bytes(req);
+	int length;
 	struct scatterlist *sg = iod->sg;
 	int dma_len = sg_dma_len(sg);
 	u64 dma_addr = sg_dma_address(sg);
@@ -747,6 +750,12 @@ static blk_status_t nvme_pci_setup_prps(struct nvme_dev *dev,
 	void **list = nvme_pci_iod_list(req);
 	dma_addr_t prp_dma;
 	int nprps, i;
+
+	if (iod->kv_cmd) {
+		length = iod->param.kv_data_len;
+	} else {
+		length = blk_rq_payload_bytes(req);
+	}
 
 	length -= (NVME_CTRL_PAGE_SIZE - offset);
 	if (length <= 0) {
@@ -812,8 +821,13 @@ static blk_status_t nvme_pci_setup_prps(struct nvme_dev *dev,
 		dma_len = sg_dma_len(sg);
 	}
 done:
-	cmnd->dptr.prp1 = cpu_to_le64(sg_dma_address(iod->sg));
-	cmnd->dptr.prp2 = cpu_to_le64(iod->first_dma);
+	if (is_kv_cmd(cmnd->common.opcode)) {
+		cmnd->kv_store.dptr.prp1 = cpu_to_le64(sg_dma_address(iod->sg));
+		cmnd->kv_store.dptr.prp2 = cpu_to_le64(iod->first_dma);
+	} else {
+		cmnd->rw.dptr.prp1 = cpu_to_le64(sg_dma_address(iod->sg));
+		cmnd->rw.dptr.prp2 = cpu_to_le64(iod->first_dma);
+	}
 	return BLK_STS_OK;
 free_prps:
 	nvme_free_prps(dev, req);
@@ -921,11 +935,11 @@ free_sgls:
 }
 
 static blk_status_t nvme_setup_prp_simple(struct nvme_dev *dev,
-		struct request *req, struct nvme_rw_command *cmnd,
+		struct request *req, struct nvme_command *cmnd,
 		struct bio_vec *bv)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\n", __FUNCTION__);
+		printk("nvme function called: %s %d\n", __FUNCTION__, is_kv_cmd(cmnd->common.opcode));
 	}
 	
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
@@ -937,9 +951,17 @@ static blk_status_t nvme_setup_prp_simple(struct nvme_dev *dev,
 		return BLK_STS_RESOURCE;
 	iod->dma_len = bv->bv_len;
 
-	cmnd->dptr.prp1 = cpu_to_le64(iod->first_dma);
-	if (bv->bv_len > first_prp_len)
-		cmnd->dptr.prp2 = cpu_to_le64(iod->first_dma + first_prp_len);
+	printk("dma_len %d %d\n", bv->bv_len, iod->param.kv_data_len);
+
+	if (is_kv_cmd(cmnd->common.opcode)) {
+		 cmnd->kv_store.dptr.prp1 = cpu_to_le64(iod->first_dma);
+		if (bv->bv_len > first_prp_len) 
+			cmnd->kv_store.dptr.prp2 = cpu_to_le64(iod->first_dma + first_prp_len);
+	} else {
+		cmnd->rw.dptr.prp1 = cpu_to_le64(iod->first_dma);
+		if (bv->bv_len > first_prp_len)
+			cmnd->rw.dptr.prp2 = cpu_to_le64(iod->first_dma + first_prp_len);
+	}
 	return BLK_STS_OK;
 }
 
@@ -981,8 +1003,7 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 
 		if (!is_pci_p2pdma_page(bv.bv_page)) {
 			if (bv.bv_offset + bv.bv_len <= NVME_CTRL_PAGE_SIZE * 2)
-				return nvme_setup_prp_simple(dev, req,
-							     &cmnd->rw, &bv);
+				return nvme_setup_prp_simple(dev, req, cmnd, &bv);
 
 			if (iod->nvmeq->qid && sgl_threshold &&
 			    dev->ctrl.sgls & ((1 << 0) | (1 << 1)))
@@ -1013,7 +1034,7 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 	if (iod->use_sgl)
 		ret = nvme_pci_setup_sgls(dev, req, &cmnd->rw, nr_mapped);
 	else
-		ret = nvme_pci_setup_prps(dev, req, &cmnd->rw);
+		ret = nvme_pci_setup_prps(dev, req, cmnd);
 	if (ret != BLK_STS_OK)
 		goto out_unmap_sg;
 	return BLK_STS_OK;
@@ -1047,11 +1068,7 @@ static blk_status_t nvme_map_metadata(struct nvme_dev *dev, struct request *req,
  */
 static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 			 const struct blk_mq_queue_data *bd)
-{
-	if (NVME_DEBUG) {
-		printk("nvme function called: %s\n", __FUNCTION__);
-	}
-	
+{	
 	struct nvme_ns *ns = hctx->queue->queuedata;
 	struct nvme_queue *nvmeq = hctx->driver_data;
 	struct nvme_dev *dev = nvmeq->dev;
@@ -1059,6 +1076,7 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 	struct nvme_command cmnd;
 	blk_status_t ret;
+	bool b_kv_cmd = false;
 
 	iod->aborted = 0;
 	iod->npages = -1;
@@ -1074,6 +1092,15 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	ret = nvme_setup_cmd(ns, req, &cmnd);
 	if (ret)
 		return ret;
+
+	b_kv_cmd = is_kv_cmd(cmnd.common.opcode);
+	if (b_kv_cmd) {
+		iod->kv_cmd = 1;
+	}
+
+	if (NVME_DEBUG) {
+		printk("nvme function called: %s %d\n", __FUNCTION__, b_kv_cmd);
+	}
 
 	if (blk_rq_nr_phys_segments(req)) {
 		ret = nvme_map_data(dev, req, &cmnd);
