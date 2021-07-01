@@ -999,11 +999,9 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 	blk_status_t ret = BLK_STS_RESOURCE;
 	int nr_mapped;
 
-	printk("11 %d\n", iod->kv_cmd);
 	if (blk_rq_nr_phys_segments(req) == 1 && ! iod->kv_cmd) {
 		struct bio_vec bv = req_bvec(req);
 		
-		printk("22\n");
 		if (iod->kv_cmd || !is_pci_p2pdma_page(bv.bv_page)) {
 			printk("Not pci_p2pdma page %d\n", bv.bv_offset + bv.bv_len);
 			if (bv.bv_offset + bv.bv_len <= NVME_CTRL_PAGE_SIZE * 2)
@@ -1016,14 +1014,12 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 		}
 	}
 
-	printk("33\n");
 	iod->dma_len = 0;
 	iod->sg = mempool_alloc(dev->iod_mempool, GFP_ATOMIC);
 	if (!iod->sg)
 		return BLK_STS_RESOURCE;
 
 	if (iod->kv_cmd) {
-		printk("44\n");
 		if (param->kv_data_sg_ptr) { // should NOT be NULL
 			struct scatterlist *sg;
 			int i;

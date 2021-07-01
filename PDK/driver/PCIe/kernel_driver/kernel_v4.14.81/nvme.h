@@ -128,7 +128,8 @@ struct nvme_io_param {
 static inline struct nvme_io_param* nvme_io_param(struct request* req)
 {
 	if (NVME_DEBUG) {
-		printk("nvme header function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme header function called: %s\n", __FUNCTION__);
+		printk("nvme header function called: %s\n", __FUNCTION__);
 	}
 
   	return blk_mq_rq_to_pdu(req);
@@ -141,7 +142,7 @@ enum {
 static inline struct nvme_request *nvme_req(struct request *req)
 {
 	if (NVME_DEBUG) {
-		printk("nvme header function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme header function called: %s\n", __FUNCTION__);
 	}
 	
 	return blk_mq_rq_to_pdu(req);
@@ -307,7 +308,7 @@ static inline u64 nvme_block_nr(struct nvme_ns *ns, sector_t sector)
 static inline void nvme_cleanup_cmd(struct request *req)
 {
 	if (NVME_DEBUG) {
-		printk("nvme header function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme header function called: %s\n", __FUNCTION__);
 
 	}
 
@@ -321,7 +322,7 @@ static inline void nvme_end_request(struct request *req, __le16 status,
 		union nvme_result result)
 {
 	if (NVME_DEBUG) {
-		printk("nvme header function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme header function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_request *rq = nvme_req(req);

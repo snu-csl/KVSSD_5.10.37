@@ -338,7 +338,7 @@ static bool nvme_dbbuf_update_and_check_event(u16 value, u32 *dbbuf_db,
 static int nvme_npages(unsigned size, struct nvme_dev *dev)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 
 	unsigned nprps = DIV_ROUND_UP(size + dev->ctrl.page_size,
@@ -350,7 +350,7 @@ static unsigned int nvme_iod_alloc_size(struct nvme_dev *dev,
 		unsigned int size, unsigned int nseg)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	return sizeof(__le64 *) * nvme_npages(size, dev) +
@@ -360,7 +360,7 @@ static unsigned int nvme_iod_alloc_size(struct nvme_dev *dev,
 static unsigned int nvme_cmd_size(struct nvme_dev *dev)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	return sizeof(struct nvme_iod) +
@@ -407,7 +407,7 @@ static int nvme_init_request(struct blk_mq_tag_set *set, struct request *req,
 		unsigned int hctx_idx, unsigned int numa_node)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_dev *dev = set->driver_data;
@@ -423,7 +423,7 @@ static int nvme_init_request(struct blk_mq_tag_set *set, struct request *req,
 static int nvme_pci_map_queues(struct blk_mq_tag_set *set)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_dev *dev = set->driver_data;
@@ -442,7 +442,7 @@ static void __nvme_submit_cmd(struct nvme_queue *nvmeq,
 						struct nvme_command *cmd)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	u16 tail = nvmeq->sq_tail;
@@ -463,7 +463,7 @@ static void __nvme_submit_cmd(struct nvme_queue *nvmeq,
 static __le64 **iod_list(struct request *req)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
@@ -473,7 +473,7 @@ static __le64 **iod_list(struct request *req)
 static blk_status_t __nvme_init_iod(struct request *rq, struct nvme_dev *dev, bool kv_cmd)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(rq);
@@ -509,7 +509,7 @@ static blk_status_t __nvme_init_iod(struct request *rq, struct nvme_dev *dev, bo
 static blk_status_t nvme_init_iod(struct request* rq, struct nvme_dev* dev)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	return __nvme_init_iod(rq, dev, false);
@@ -518,7 +518,7 @@ static blk_status_t nvme_init_iod(struct request* rq, struct nvme_dev* dev)
 static blk_status_t nvme_init_iod_for_kv(struct request* rq, struct nvme_dev* dev)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	return __nvme_init_iod(rq, dev, true);
@@ -527,7 +527,7 @@ static blk_status_t nvme_init_iod_for_kv(struct request* rq, struct nvme_dev* de
 static void nvme_free_iod(struct nvme_dev *dev, struct request *req)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
@@ -619,7 +619,7 @@ static void nvme_dif_complete(u32 p, u32 v, struct t10_pi_tuple *pi)
 static void nvme_print_sgl(struct scatterlist *sgl, int nents)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	int i;
@@ -637,7 +637,7 @@ static void nvme_print_sgl(struct scatterlist *sgl, int nents)
 static blk_status_t nvme_setup_prps(struct nvme_dev *dev, struct request *req)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
@@ -735,14 +735,15 @@ static blk_status_t nvme_setup_prps(struct nvme_dev *dev, struct request *req)
 static blk_status_t nvme_kv_map_data(struct nvme_dev *dev, struct request *req,
 		struct nvme_command *cmnd)
 {
-	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
-	}
 	
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 	struct nvme_io_param *param = &iod->param;
 	enum dma_data_direction dma_dir = DMA_BIDIRECTIONAL;
 	blk_status_t ret = BLK_STS_IOERR;
+
+	if (NVME_DEBUG) {
+		printk("nvme function called: %s %d\n", __FUNCTION__, param->kv_data_nents);
+	}
 
 	if (param->kv_data_sg_ptr) { // should NOT be NULL
 		struct scatterlist *sg;
@@ -782,7 +783,7 @@ out:
 static void nvme_kv_unmap_data(struct nvme_dev *dev, struct request *req)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
@@ -803,7 +804,7 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 		struct nvme_command *cmnd)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
@@ -860,7 +861,7 @@ out:
 static void nvme_unmap_data(struct nvme_dev *dev, struct request *req)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
@@ -890,9 +891,6 @@ static void nvme_unmap_data(struct nvme_dev *dev, struct request *req)
 static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 			 const struct blk_mq_queue_data *bd)
 {
-	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
-	}
 	
 	struct nvme_ns *ns = hctx->queue->queuedata;
 	struct nvme_queue *nvmeq = hctx->driver_data;
@@ -907,6 +905,10 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 		return ret;
 
 	b_kv_cmd = is_kv_cmd(cmnd.common.opcode);
+
+	if (NVME_DEBUG) {
+		printk("nvme function called: %s %d %d\n", __FUNCTION__, b_kv_cmd, blk_rq_nr_phys_segments(req));
+	}
 	if (b_kv_cmd) {
 		ret = nvme_init_iod_for_kv(req, dev);
 		if (ret)
@@ -983,7 +985,7 @@ out_free_cmd:
 static void nvme_pci_complete_rq(struct request *req)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
@@ -997,7 +999,7 @@ static inline bool nvme_cqe_valid(struct nvme_queue *nvmeq, u16 head,
 		u16 phase)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	return (le16_to_cpu(nvmeq->cqes[head].status) & 1) == phase;
@@ -1006,7 +1008,7 @@ static inline bool nvme_cqe_valid(struct nvme_queue *nvmeq, u16 head,
 static inline void nvme_ring_cq_doorbell(struct nvme_queue *nvmeq)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	u16 head = nvmeq->cq_head;
@@ -1022,7 +1024,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq,
 		struct nvme_completion *cqe)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	struct request *req;
@@ -1056,7 +1058,7 @@ static inline bool nvme_read_cqe(struct nvme_queue *nvmeq,
 		struct nvme_completion *cqe)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	if (nvme_cqe_valid(nvmeq, nvmeq->cq_head, nvmeq->cq_phase)) {
@@ -1074,7 +1076,7 @@ static inline bool nvme_read_cqe(struct nvme_queue *nvmeq,
 static void nvme_process_cq(struct nvme_queue *nvmeq)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_completion cqe;
@@ -1092,7 +1094,7 @@ static void nvme_process_cq(struct nvme_queue *nvmeq)
 static irqreturn_t nvme_irq(int irq, void *data)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	irqreturn_t result;
@@ -1108,7 +1110,7 @@ static irqreturn_t nvme_irq(int irq, void *data)
 static irqreturn_t nvme_irq_check(int irq, void *data)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_queue *nvmeq = data;
@@ -1120,7 +1122,7 @@ static irqreturn_t nvme_irq_check(int irq, void *data)
 static int __nvme_poll(struct nvme_queue *nvmeq, unsigned int tag)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_completion cqe;
@@ -1150,7 +1152,7 @@ static int __nvme_poll(struct nvme_queue *nvmeq, unsigned int tag)
 static int nvme_poll(struct blk_mq_hw_ctx *hctx, unsigned int tag)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_queue *nvmeq = hctx->driver_data;
@@ -1161,7 +1163,7 @@ static int nvme_poll(struct blk_mq_hw_ctx *hctx, unsigned int tag)
 static void nvme_pci_submit_async_event(struct nvme_ctrl *ctrl, int aer_idx)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_dev *dev = to_nvme_dev(ctrl);

@@ -597,7 +597,7 @@ static void aio_worker_exit(void) {
 static __le32 nvme_get_log_dw10(u8 lid, size_t size)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	return cpu_to_le32((((size / 4) - 1) << 16) | lid);
@@ -606,7 +606,7 @@ static __le32 nvme_get_log_dw10(u8 lid, size_t size)
 int nvme_reset_ctrl(struct nvme_ctrl *ctrl)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	if (!nvme_change_ctrl_state(ctrl, NVME_CTRL_RESETTING))
@@ -620,7 +620,7 @@ EXPORT_SYMBOL_GPL(nvme_reset_ctrl);
 static int nvme_reset_ctrl_sync(struct nvme_ctrl *ctrl)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	int ret;
@@ -634,7 +634,7 @@ static int nvme_reset_ctrl_sync(struct nvme_ctrl *ctrl)
 static blk_status_t nvme_error_status(struct request *req)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	switch (nvme_req(req)->status & 0x7ff) {
@@ -665,7 +665,7 @@ static blk_status_t nvme_error_status(struct request *req)
 static inline bool nvme_req_needs_retry(struct request *req)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	if (blk_noretry_request(req))
@@ -680,7 +680,7 @@ static inline bool nvme_req_needs_retry(struct request *req)
 void nvme_complete_rq(struct request *req)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	if (unlikely(nvme_req(req)->status && nvme_req_needs_retry(req))) {
@@ -696,7 +696,7 @@ EXPORT_SYMBOL_GPL(nvme_complete_rq);
 void nvme_cancel_request(struct request *req, void *data, bool reserved)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	int status;
@@ -720,7 +720,7 @@ bool nvme_change_ctrl_state(struct nvme_ctrl *ctrl,
 		enum nvme_ctrl_state new_state)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	enum nvme_ctrl_state old_state;
@@ -797,7 +797,7 @@ EXPORT_SYMBOL_GPL(nvme_change_ctrl_state);
 static void nvme_free_ns(struct kref *kref)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_ns *ns = container_of(kref, struct nvme_ns, kref);
@@ -820,7 +820,7 @@ static void nvme_free_ns(struct kref *kref)
 static void nvme_put_ns(struct nvme_ns *ns)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	kref_put(&ns->kref, nvme_free_ns);
@@ -829,7 +829,7 @@ static void nvme_put_ns(struct nvme_ns *ns)
 static struct nvme_ns *nvme_get_ns_from_disk(struct gendisk *disk)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_ns *ns;
@@ -857,7 +857,7 @@ struct request *nvme_alloc_request(struct request_queue *q,
 		struct nvme_command *cmd, unsigned int flags, int qid)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	unsigned op = nvme_is_write(cmd) ? REQ_OP_DRV_OUT : REQ_OP_DRV_IN;
@@ -882,7 +882,7 @@ EXPORT_SYMBOL_GPL(nvme_alloc_request);
 static int nvme_toggle_streams(struct nvme_ctrl *ctrl, bool enable)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_command c;
@@ -902,7 +902,7 @@ static int nvme_toggle_streams(struct nvme_ctrl *ctrl, bool enable)
 static int nvme_disable_streams(struct nvme_ctrl *ctrl)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	return nvme_toggle_streams(ctrl, false);
@@ -911,7 +911,7 @@ static int nvme_disable_streams(struct nvme_ctrl *ctrl)
 static int nvme_enable_streams(struct nvme_ctrl *ctrl)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	return nvme_toggle_streams(ctrl, true);
@@ -921,7 +921,7 @@ static int nvme_get_stream_params(struct nvme_ctrl *ctrl,
 				  struct streams_directive_params *s, u32 nsid)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_command c;
@@ -941,7 +941,7 @@ static int nvme_get_stream_params(struct nvme_ctrl *ctrl,
 static int nvme_configure_directives(struct nvme_ctrl *ctrl)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct streams_directive_params s;
@@ -982,7 +982,7 @@ static void nvme_assign_write_stream(struct nvme_ctrl *ctrl,
 				     u32 *dsmgmt)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	enum rw_hint streamid = req->write_hint;
@@ -1006,7 +1006,7 @@ static inline void nvme_setup_flush(struct nvme_ns *ns,
 		struct nvme_command *cmnd)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	memset(cmnd, 0, sizeof(*cmnd));
@@ -1018,7 +1018,7 @@ static blk_status_t nvme_setup_discard(struct nvme_ns *ns, struct request *req,
 		struct nvme_command *cmnd)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	unsigned short segments = blk_rq_nr_discard_segments(req), n = 0;
@@ -1062,7 +1062,7 @@ static inline blk_status_t nvme_setup_rw(struct nvme_ns *ns,
 		struct request *req, struct nvme_command *cmnd)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_ctrl *ctrl = ns->ctrl;
@@ -1122,7 +1122,7 @@ blk_status_t nvme_setup_cmd(struct nvme_ns *ns, struct request *req,
 		struct nvme_command *cmd)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	blk_status_t ret = BLK_STS_OK;
@@ -1169,7 +1169,7 @@ int __nvme_submit_sync_cmd(struct request_queue *q, struct nvme_command *cmd,
 		unsigned timeout, int qid, int at_head, int flags)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct request *req;
@@ -1204,7 +1204,7 @@ int nvme_submit_sync_cmd(struct request_queue *q, struct nvme_command *cmd,
 		void *buffer, unsigned bufflen)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	return __nvme_submit_sync_cmd(q, cmd, NULL, buffer, bufflen, 0,
@@ -1216,7 +1216,7 @@ static void *nvme_add_user_metadata(struct bio *bio, void __user *ubuf,
 		unsigned len, u32 seed, bool write)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct bio_integrity_payload *bip;
@@ -1256,7 +1256,7 @@ static int nvme_submit_user_cmd(struct request_queue *q,
 		u32 meta_seed, u32 *result, unsigned timeout)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	bool write = nvme_is_write(cmd);
@@ -1314,7 +1314,7 @@ static int nvme_submit_user_cmd(struct request_queue *q,
 static void nvme_keep_alive_end_io(struct request *rq, blk_status_t status)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_ctrl *ctrl = rq->end_io_data;
@@ -1334,7 +1334,7 @@ static void nvme_keep_alive_end_io(struct request *rq, blk_status_t status)
 static int nvme_keep_alive(struct nvme_ctrl *ctrl)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_command c;
@@ -1368,7 +1368,7 @@ static int nvme_keep_alive(struct nvme_ctrl *ctrl)
 static bool check_add_for_single_cont_phyaddress(void __user *address, unsigned length, struct request_queue *q)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	unsigned offset = 0;
@@ -1386,7 +1386,7 @@ static bool check_add_for_single_cont_phyaddress(void __user *address, unsigned 
 static int user_addr_npages(int offset, int size)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	unsigned count = DIV_ROUND_UP(offset + size, PAGE_SIZE);
@@ -1396,7 +1396,7 @@ static int user_addr_npages(int offset, int size)
 static struct aio_user_ctx *get_aio_user_ctx(void __user *addr, unsigned len, bool b_kernel)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	int offset = offset_in_page(addr);
@@ -1460,7 +1460,7 @@ int __nvme_submit_kv_user_cmd(struct request_queue *q, struct nvme_command *cmd,
 		u32 *result, u32 *status, unsigned timeout, bool aio)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_ns *ns = q->queuedata;
@@ -1649,7 +1649,7 @@ static int nvme_user_kv_cmd(struct nvme_ctrl *ctrl,
 		struct nvme_passthru_kv_cmd __user *ucmd, bool aio)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_passthru_kv_cmd cmd;
@@ -1804,7 +1804,7 @@ exit:
 static void nvme_keep_alive_work(struct work_struct *work)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_ctrl *ctrl = container_of(to_delayed_work(work),
@@ -1821,7 +1821,7 @@ static void nvme_keep_alive_work(struct work_struct *work)
 void nvme_start_keep_alive(struct nvme_ctrl *ctrl)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	if (unlikely(ctrl->kato == 0))
@@ -1835,7 +1835,7 @@ EXPORT_SYMBOL_GPL(nvme_start_keep_alive);
 void nvme_stop_keep_alive(struct nvme_ctrl *ctrl)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	if (unlikely(ctrl->kato == 0))
@@ -1848,7 +1848,7 @@ EXPORT_SYMBOL_GPL(nvme_stop_keep_alive);
 static int nvme_identify_ctrl(struct nvme_ctrl *dev, struct nvme_id_ctrl **id)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_command c = { };
@@ -1873,7 +1873,7 @@ static int nvme_identify_ns_descs(struct nvme_ctrl *ctrl, unsigned nsid,
 		u8 *eui64, u8 *nguid, uuid_t *uuid)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_command c = { };
@@ -1948,7 +1948,7 @@ free_data:
 static int nvme_identify_ns_list(struct nvme_ctrl *dev, unsigned nsid, __le32 *ns_list)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_command c = { };
@@ -1963,7 +1963,7 @@ static struct nvme_id_ns *nvme_identify_ns(struct nvme_ctrl *ctrl,
 		unsigned nsid)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_id_ns *id;
@@ -1993,7 +1993,7 @@ static int nvme_set_features(struct nvme_ctrl *dev, unsigned fid, unsigned dword
 		      void *buffer, size_t buflen, u32 *result)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_command c;
@@ -2015,7 +2015,7 @@ static int nvme_set_features(struct nvme_ctrl *dev, unsigned fid, unsigned dword
 int nvme_set_queue_count(struct nvme_ctrl *ctrl, int *count)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	u32 q_count = (*count - 1) | ((*count - 1) << 16);
@@ -2047,7 +2047,7 @@ EXPORT_SYMBOL_GPL(nvme_set_queue_count);
 static int nvme_submit_io(struct nvme_ns *ns, struct nvme_user_io __user *uio)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_user_io io;
@@ -2102,7 +2102,7 @@ static int nvme_user_cmd(struct nvme_ctrl *ctrl, struct nvme_ns *ns,
 			struct nvme_passthru_cmd __user *ucmd)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_passthru_cmd cmd;
@@ -2149,7 +2149,7 @@ static int nvme_ioctl(struct block_device *bdev, fmode_t mode,
 		unsigned int cmd, unsigned long arg)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_ns *ns = bdev->bd_disk->private_data;
@@ -2199,7 +2199,7 @@ static int nvme_compat_ioctl(struct block_device *bdev, fmode_t mode,
 static int nvme_open(struct block_device *bdev, fmode_t mode)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	return nvme_get_ns_from_disk(bdev->bd_disk) ? 0 : -ENXIO;
@@ -2208,7 +2208,7 @@ static int nvme_open(struct block_device *bdev, fmode_t mode)
 static void nvme_release(struct gendisk *disk, fmode_t mode)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_ns *ns = disk->private_data;
@@ -2220,7 +2220,7 @@ static void nvme_release(struct gendisk *disk, fmode_t mode)
 static int nvme_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	/* some standard values */
@@ -2292,7 +2292,7 @@ static void nvme_init_integrity(struct nvme_ns *ns)
 static void nvme_set_chunk_size(struct nvme_ns *ns)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	u32 chunk_size = (((u32)ns->noiob) << (ns->lba_shift - 9));
@@ -2302,7 +2302,7 @@ static void nvme_set_chunk_size(struct nvme_ns *ns)
 static void nvme_config_discard(struct nvme_ns *ns)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_ctrl *ctrl = ns->ctrl;
@@ -2332,7 +2332,7 @@ static void nvme_report_ns_ids(struct nvme_ctrl *ctrl, unsigned int nsid,
 		struct nvme_id_ns *id, u8 *eui64, u8 *nguid, uuid_t *uuid)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	if (ctrl->vs >= NVME_VS(1, 1, 0))
@@ -2352,7 +2352,7 @@ static void nvme_report_ns_ids(struct nvme_ctrl *ctrl, unsigned int nsid,
 static void __nvme_revalidate_disk(struct gendisk *disk, struct nvme_id_ns *id)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_ns *ns = disk->private_data;
@@ -2391,7 +2391,7 @@ static void __nvme_revalidate_disk(struct gendisk *disk, struct nvme_id_ns *id)
 static int nvme_revalidate_disk(struct gendisk *disk)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_ns *ns = disk->private_data;
@@ -2433,7 +2433,7 @@ out:
 static char nvme_pr_type(enum pr_type type)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	switch (type) {
@@ -2458,7 +2458,7 @@ static int nvme_pr_command(struct block_device *bdev, u32 cdw10,
 				u64 key, u64 sa_key, u8 op)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_ns *ns = bdev->bd_disk->private_data;
@@ -2480,7 +2480,7 @@ static int nvme_pr_register(struct block_device *bdev, u64 old,
 		u64 new, unsigned flags)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	u32 cdw10;
@@ -2498,7 +2498,7 @@ static int nvme_pr_reserve(struct block_device *bdev, u64 key,
 		enum pr_type type, unsigned flags)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	u32 cdw10;
@@ -2515,7 +2515,7 @@ static int nvme_pr_preempt(struct block_device *bdev, u64 old, u64 new,
 		enum pr_type type, bool abort)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	u32 cdw10 = nvme_pr_type(type) << 8 | abort ? 2 : 1;
@@ -2525,7 +2525,7 @@ static int nvme_pr_preempt(struct block_device *bdev, u64 old, u64 new,
 static int nvme_pr_clear(struct block_device *bdev, u64 key)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	u32 cdw10 = 1 | (key ? 1 << 3 : 0);
@@ -2535,7 +2535,7 @@ static int nvme_pr_clear(struct block_device *bdev, u64 key)
 static int nvme_pr_release(struct block_device *bdev, u64 key, enum pr_type type)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	u32 cdw10 = nvme_pr_type(type) << 8 | key ? 1 << 3 : 0;
@@ -2619,7 +2619,7 @@ static int nvme_wait_ready(struct nvme_ctrl *ctrl, u64 cap, bool enabled)
 int nvme_disable_ctrl(struct nvme_ctrl *ctrl, u64 cap)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	int ret;
@@ -2641,7 +2641,7 @@ EXPORT_SYMBOL_GPL(nvme_disable_ctrl);
 int nvme_enable_ctrl(struct nvme_ctrl *ctrl, u64 cap)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	/*
@@ -3167,7 +3167,7 @@ static int nvme_dev_release(struct inode *inode, struct file *file)
 static int nvme_dev_user_cmd(struct nvme_ctrl *ctrl, void __user *argp)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	struct nvme_ns *ns;
@@ -3876,7 +3876,7 @@ void nvme_complete_async_event(struct nvme_ctrl *ctrl, __le16 status,
 		union nvme_result *res)
 {
 	if (NVME_DEBUG) {
-		printk("nvme_core function called: %s\t\t<--- %pS\n", __FUNCTION__, __builtin_return_address(0));
+		printk("nvme_core function called: %s\n", __FUNCTION__);
 	}
 	
 	u32 result = le32_to_cpu(res->u32);
