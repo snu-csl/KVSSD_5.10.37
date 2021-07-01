@@ -951,8 +951,6 @@ static blk_status_t nvme_setup_prp_simple(struct nvme_dev *dev,
 		return BLK_STS_RESOURCE;
 	iod->dma_len = bv->bv_len;
 
-	printk("dma_len %d %d\n", bv->bv_len, iod->param.kv_data_len);
-
 	if (is_kv_cmd(cmnd->common.opcode)) {
 		 cmnd->kv_store.dptr.prp1 = cpu_to_le64(iod->first_dma);
 		if (bv->bv_len > first_prp_len) 
@@ -1003,7 +1001,6 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 		struct bio_vec bv = req_bvec(req);
 		
 		if (iod->kv_cmd || !is_pci_p2pdma_page(bv.bv_page)) {
-			printk("Not pci_p2pdma page %d\n", bv.bv_offset + bv.bv_len);
 			if (bv.bv_offset + bv.bv_len <= NVME_CTRL_PAGE_SIZE * 2)
 				return nvme_setup_prp_simple(dev, req, cmnd, &bv);
 
