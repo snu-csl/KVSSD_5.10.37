@@ -22,7 +22,7 @@
 #include <linux/sed-opal.h>
 
 #define KSID_SUPPORT
-#define NVME_DEBUG 1
+#define NVME_DEBUG 0
 
 #define is_kv_append_cmd(opcode)      ((opcode) == nvme_cmd_kv_append)
 #define is_kv_store_cmd(opcode)       ((opcode) == nvme_cmd_kv_store)
