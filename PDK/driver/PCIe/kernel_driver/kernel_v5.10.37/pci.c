@@ -695,13 +695,15 @@ static void nvme_unmap_data(struct nvme_dev *dev, struct request *req)
 	
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 
-	if (iod->dma_len) {
-		dma_unmap_page(dev->dev, iod->first_dma, iod->dma_len,
-			       rq_dma_dir(req));
-		return;
-	}
+	if (iod->kv_cmd) {
+		if (iod->dma_len) {
+			dma_unmap_page(dev->dev, iod->first_dma, iod->dma_len,
+						   rq_dma_dir(req));
+			return;
+		}
 
-	WARN_ON_ONCE(!iod->nents);
+		WARN_ON_ONCE(!iod->nents);
+	}
 
 	nvme_unmap_sg(dev, req);
 	if (iod->npages == 0)
