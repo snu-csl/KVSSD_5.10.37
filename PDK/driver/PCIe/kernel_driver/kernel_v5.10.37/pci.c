@@ -679,31 +679,52 @@ static void nvme_unmap_sg(struct nvme_dev *dev, struct request *req)
 	}
 	
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
+	struct nvme_io_param *param = &iod->param;
+	enum dma_data_direction dma_dir = DMA_BIDIRECTIONAL;
 
 	if (is_pci_p2pdma_page(sg_page(iod->sg)))
 		pci_p2pdma_unmap_sg(dev->dev, iod->sg, iod->nents,
 				    rq_dma_dir(req));
-	else
-		dma_unmap_sg(dev->dev, iod->sg, iod->nents, rq_dma_dir(req));
+	else {
+		if (iod->kv_cmd) {
+			if (param->kv_data_sg_ptr) {
+				dma_unmap_sg(dev->dev, iod->sg, iod->nents, dma_dir);
+			}
+			if (param->kv_meta_sg_ptr) {
+				dma_unmap_sg(dev->dev, param->kv_meta_sg_ptr, 1, DMA_BIDIRECTIONAL);
+			}
+		}
+		else {
+			dma_unmap_sg(dev->dev, iod->sg, iod->nents, rq_dma_dir(req));
+		}
+	}
 }
 
 static void nvme_unmap_data(struct nvme_dev *dev, struct request *req)
 {
 	if (NVME_DEBUG) {
-		printk("nvme function called: %s\n", __FUNCTION__);
+		printk("nvme function called: %s %d\n", __FUNCTION__);
 	}
 	
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
+	enum dma_data_direction dma_dir = DMA_BIDIRECTIONAL;
 
-	if (! iod->kv_cmd) {
-		if (iod->dma_len) {
-			dma_unmap_page(dev->dev, iod->first_dma, iod->dma_len,
-						   rq_dma_dir(req));
-			return;
+	printk("nvme function called: %s %d %d\n", __FUNCTION__,iod->kv_cmd, iod->dma_len);
+
+	if (iod->dma_len) {
+		if (iod->kv_cmd) {
+			printk("dma_unmap_page!\n");
+			dma_unmap_page(dev->dev, iod->first_dma, iod->dma_len, dma_dir);
 		}
-
-		WARN_ON_ONCE(!iod->nents);
+		else {
+			dma_unmap_page(dev->dev, iod->first_dma, iod->dma_len, rq_dma_dir(req));
+		}
+		
+		return;
 	}
+
+	if (! iod->kv_cmd)
+		WARN_ON_ONCE(!iod->nents);
 
 	nvme_unmap_sg(dev, req);
 	if (iod->npages == 0)
@@ -773,6 +794,8 @@ static blk_status_t nvme_pci_setup_prps(struct nvme_dev *dev,
 		dma_addr = sg_dma_address(sg);
 		dma_len = sg_dma_len(sg);
 	}
+	printk("Final nvme_setup_prps %d %d %d %d %d\n", iod->kv_cmd, length, dma_len, NVME_CTRL_PAGE_SIZE, offset);
+
 
 	if (length <= NVME_CTRL_PAGE_SIZE) {
 		iod->first_dma = dma_addr;
@@ -787,6 +810,7 @@ static blk_status_t nvme_pci_setup_prps(struct nvme_dev *dev,
 		pool = dev->prp_page_pool;
 		iod->npages = 1;
 	}
+	printk("nprps %d\n", nprps);
 
 	prp_list = dma_pool_alloc(pool, GFP_ATOMIC, &prp_dma);
 	if (!prp_list) {
@@ -996,6 +1020,7 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 	
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 	struct nvme_io_param *param = &iod->param;
+	enum dma_data_direction dma_dir = DMA_BIDIRECTIONAL;
 	blk_status_t ret = BLK_STS_RESOURCE;
 	int nr_mapped;
 
@@ -1023,12 +1048,15 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 			struct scatterlist *sg;
 			int i;
 			/* copy user sg to iod->sg */
+
+			printk("kv_data_nents %d\n", param->kv_data_nents);
+			sg_init_table(iod->sg, param->kv_data_nents);
 			for_each_sg(param->kv_data_sg_ptr, sg, param->kv_data_nents, i) {
 				iod->sg[i] = *sg;
 			}
 			iod->nents = param->kv_data_nents;
 			ret = BLK_STS_RESOURCE;
-			if (!dma_map_sg_attrs(dev->dev, iod->sg, iod->nents, rq_dma_dir(req), DMA_ATTR_NO_WARN))
+			if (!dma_map_sg_attrs(dev->dev, iod->sg, iod->nents, dma_dir, DMA_ATTR_NO_WARN))
 				goto out_free_sg;
 
 			ret = nvme_pci_setup_prps(dev, req, cmnd);
