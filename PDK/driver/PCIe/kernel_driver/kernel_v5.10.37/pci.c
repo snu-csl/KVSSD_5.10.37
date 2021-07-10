@@ -606,7 +606,6 @@ static void nvme_unmap_sg(struct nvme_dev *dev, struct request *req)
 static void nvme_kv_unmap_data(struct nvme_dev *dev, struct request *req)
 {
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
-	struct nvme_io_param *param = &iod->param;
 
 	if (iod->dma_len) {
 		printk("\n\n\n\n%s - iod->dma_len passed\n\n\n\n\n", __FUNCTION__);
@@ -615,11 +614,7 @@ static void nvme_kv_unmap_data(struct nvme_dev *dev, struct request *req)
 		return;
 	}
 
-	if (! iod->nents) {
-		printk("\n\n\n\n%s - ! iod->nents passed\n\n\n\n\n", __FUNCTION__);
-	}
-
-	// WARN_ON_ONCE(!iod->nents);
+	WARN_ON_ONCE(!iod->nents);
 
 	nvme_kv_unmap_sg(dev, req);
 	if (iod->npages == 0)
@@ -1043,6 +1038,7 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	iod->aborted = 0;
 	iod->npages = -1;
 	iod->nents = 0;
+	iod->kv_cmd = 0;
 
 	/*
 	 * We should not need to do this, but we're still using this to
