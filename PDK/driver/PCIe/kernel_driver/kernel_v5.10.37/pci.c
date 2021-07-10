@@ -614,7 +614,7 @@ static void nvme_kv_unmap_data(struct nvme_dev *dev, struct request *req)
 		return;
 	}
 
-	WARN_ON_ONCE(!iod->nents);
+	// WARN_ON_ONCE(!iod->nents);
 
 	nvme_kv_unmap_sg(dev, req);
 	if (iod->npages == 0)
