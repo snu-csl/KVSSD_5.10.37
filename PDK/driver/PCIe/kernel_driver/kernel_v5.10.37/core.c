@@ -6150,7 +6150,7 @@ static int __init nvme_core_init(void)
 	nvme_class = class_create(THIS_MODULE, "nvme");
 	if (IS_ERR(nvme_class)) {
 		result = PTR_ERR(nvme_class);
-		goto unregister_chrdev;
+		goto destroy_aio_worker;
 	}
 	nvme_class->dev_uevent = nvme_class_uevent;
 
@@ -6161,13 +6161,12 @@ static int __init nvme_core_init(void)
 	}
 	return 0;
 
-destroy_aio_worker:
-	aio_worker_exit();
-	class_destroy(nvme_class);
-destroy_aio_service:
-	aio_service_exit();
 destroy_class:
 	class_destroy(nvme_class);
+destroy_aio_worker:
+	aio_worker_exit();
+destroy_aio_service:
+	aio_service_exit();
 unregister_chrdev:
 	unregister_chrdev_region(nvme_chr_devt, NVME_MINORS);
 destroy_delete_wq:
